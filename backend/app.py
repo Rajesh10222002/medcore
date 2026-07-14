@@ -6,6 +6,7 @@ from routes.appointments import appointments_bp
 from routes.ai           import ai_bp
 from routes.doctors      import doctors_bp
 from routes.admin        import admin_bp
+from routes.schedule     import schedule_bp
 
 app = Flask(__name__)
 CORS(app, origins=["http://localhost:5173"])
@@ -16,6 +17,7 @@ app.register_blueprint(appointments_bp, url_prefix="/api")
 app.register_blueprint(ai_bp,           url_prefix="/api")
 app.register_blueprint(doctors_bp,      url_prefix="/api")
 app.register_blueprint(admin_bp,        url_prefix="/api")
+app.register_blueprint(schedule_bp,     url_prefix="/api")
 
 @app.route("/")
 def health():

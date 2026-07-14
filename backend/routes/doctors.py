@@ -241,20 +241,48 @@ def get_patient_detail(patient_id):
                         "date":   res.get("authoredOn", "")
                     })
 
-                # Parse Observations
+                # Parse Observations — deduplicate to latest per vital type
+                # Skip blood group (valueString) — it has its own display
+                all_obs = []
                 for entry in observation_entries:
                     res   = entry.get("resource", {})
                     code  = res.get("code", {})
                     value = res.get("valueQuantity", {})
                     date_ = res.get("effectiveDateTime", "")
-                    patient["fhir"]["observations"].append({
-                        "name":      code.get("text") or
-                                     code.get("coding", [{}])[0].get("display", "Unknown"),
+                    name  = code.get("text") or \
+                            code.get("coding", [{}])[0].get("display", "Unknown")
+
+                    # Skip blood group observations — shown separately
+                    codings = code.get("coding", [])
+                    is_blood_group = (
+                        name.lower() in ["blood group", "abo and rh group"] or
+                        any(c.get("code") == "882-1" for c in codings)
+                    )
+                    if is_blood_group:
+                        continue
+
+                    # Only include numeric vitals (valueQuantity present)
+                    if not value.get("value"):
+                        continue
+
+                    all_obs.append({
+                        "name":      name,
                         "value":     str(value.get("value", "")),
                         "unit":      value.get("unit", ""),
                         "date":      date_,
                         "date_only": date_[:10] if date_ else ""
                     })
+
+                # Sort newest first
+                all_obs.sort(key=lambda x: x.get("date", ""), reverse=True)
+
+                # Keep only the LATEST reading per vital name
+                seen_vitals = set()
+                for obs in all_obs:
+                    key = obs["name"].lower().strip()
+                    if key not in seen_vitals:
+                        seen_vitals.add(key)
+                        patient["fhir"]["observations"].append(obs)
 
                 # Parse Allergies
                 for entry in allergy_entries:
@@ -266,12 +294,6 @@ def get_patient_detail(patient_id):
                         "severity": res.get("reaction", [{}])[0]
                                         .get("severity", "unknown")
                     })
-
-                # Sort observations newest first
-                patient["fhir"]["observations"].sort(
-                    key=lambda x: x.get("date", ""),
-                    reverse=True
-                )
 
             except Exception as fe:
                 print(f"FHIR error: {fe}")
@@ -626,6 +648,176 @@ def add_allergy(patient_id):
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+    finally:
+        cur.close()
+        conn.close()
+
+
+# ─────────────────────────────────────────
+# POST /api/doctor/blood-group/:patient_id
+# Saves blood group — tries FHIR first, falls back to Neon column
+# ─────────────────────────────────────────
+@doctors_bp.route("/doctor/blood-group/<int:patient_id>", methods=["POST"])
+@token_required
+@role_required(["doctor"])
+def set_blood_group(patient_id):
+    data        = request.json
+    blood_group = data.get("blood_group", "").strip()
+
+    valid = ["A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-"]
+    if blood_group not in valid:
+        return jsonify({"error": f"Invalid blood group. Must be one of: {', '.join(valid)}"}), 400
+
+    conn = get_db()
+    cur  = conn.cursor()
+    try:
+        cur.execute(
+            "SELECT fhir_id FROM patients WHERE patient_id = %s",
+            (patient_id,)
+        )
+        row     = cur.fetchone()
+        fhir_id = row[0] if row and row[0] else None
+
+        fhir_saved = False
+
+        # Try FHIR first
+        if fhir_id:
+            try:
+                observation = {
+                    "resourceType": "Observation",
+                    "status":       "final",
+                    "category": [{
+                        "coding": [{
+                            "system":  "http://terminology.hl7.org/CodeSystem/observation-category",
+                            "code":    "laboratory",
+                            "display": "Laboratory"
+                        }]
+                    }],
+                    "code": {
+                        "coding": [{
+                            "system":  "http://loinc.org",
+                            "code":    "882-1",
+                            "display": "ABO and Rh group"
+                        }],
+                        "text": "Blood Group"
+                    },
+                    "subject":           {"reference": f"Patient/{fhir_id}"},
+                    "effectiveDateTime": str(datetime.now().date()),
+                    "valueString":       blood_group
+                }
+                resp = http_req.post(
+                    f"{FHIR_URL}/Observation",
+                    json=observation,
+                    headers={"Content-Type": "application/fhir+json"},
+                    timeout=10
+                )
+                if resp.status_code in [200, 201]:
+                    fhir_saved = True
+            except Exception as fhir_err:
+                print(f"FHIR blood group error: {fhir_err}")
+
+        # Always save to Neon as fallback
+        try:
+            cur.execute("""
+                ALTER TABLE patients
+                ADD COLUMN IF NOT EXISTS blood_group VARCHAR(5)
+            """)
+            conn.commit()
+            cur.execute("""
+                UPDATE patients SET blood_group = %s
+                WHERE patient_id = %s
+            """, (blood_group, patient_id))
+            conn.commit()
+        except Exception as neon_err:
+            print(f"Neon blood group error: {neon_err}")
+            conn.rollback()
+
+        return jsonify({
+            "message":     "Blood group saved successfully",
+            "blood_group": blood_group,
+            "fhir_saved":  fhir_saved,
+            "neon_saved":  True
+        }), 201
+
+    except Exception as e:
+        conn.rollback()
+        return jsonify({"error": str(e)}), 500
+    finally:
+        cur.close()
+        conn.close()
+
+
+# ─────────────────────────────────────────
+# GET /api/doctor/blood-group/:patient_id
+# Reads blood group from FHIR Observation
+# ─────────────────────────────────────────
+@doctors_bp.route("/doctor/blood-group/<int:patient_id>", methods=["GET"])
+@token_required
+@role_required(["doctor"])
+def get_blood_group(patient_id):
+    conn = get_db()
+    cur  = conn.cursor()
+    try:
+        # Check Neon first (fastest, most reliable)
+        try:
+            cur.execute(
+                "SELECT fhir_id, blood_group FROM patients WHERE patient_id = %s",
+                (patient_id,)
+            )
+        except Exception:
+            cur.execute(
+                "SELECT fhir_id, NULL FROM patients WHERE patient_id = %s",
+                (patient_id,)
+            )
+        row     = cur.fetchone()
+        fhir_id = row[0] if row and row[0] else None
+        neon_bg = row[1] if row and len(row) > 1 else None
+
+        # Return from Neon if available
+        if neon_bg:
+            return jsonify({"blood_group": neon_bg}), 200
+
+        if not fhir_id:
+            return jsonify({"blood_group": None}), 200
+
+        # Fallback to FHIR
+        blood_group = None
+        try:
+            bg_resp = http_req.get(
+                f"{FHIR_URL}/Observation?subject=Patient/{fhir_id}&code=http://loinc.org|882-1&_count=5",
+                headers={"Accept": "application/fhir+json"},
+                timeout=8
+            )
+            if bg_resp.status_code == 200:
+                entries = bg_resp.json().get("entry", [])
+                if entries:
+                    blood_group = entries[0].get("resource", {}).get("valueString", None)
+
+            if not blood_group:
+                all_resp = http_req.get(
+                    f"{FHIR_URL}/Observation?subject=Patient/{fhir_id}&_count=100",
+                    headers={"Accept": "application/fhir+json"},
+                    timeout=8
+                )
+                if all_resp.status_code == 200:
+                    for entry in all_resp.json().get("entry", []):
+                        res       = entry.get("resource", {})
+                        code      = res.get("code", {})
+                        codings   = code.get("coding", [])
+                        code_text = code.get("text", "")
+                        if (
+                            code_text.lower() in ["blood group", "abo and rh group"] or
+                            any(c.get("code") == "882-1" for c in codings)
+                        ) and res.get("valueString"):
+                            blood_group = res.get("valueString")
+                            break
+        except Exception as fhir_err:
+            print(f"FHIR blood group GET error: {fhir_err}")
+
+        return jsonify({"blood_group": blood_group}), 200
+
+    except Exception as e:
+        return jsonify({"blood_group": None}), 200
     finally:
         cur.close()
         conn.close()

@@ -1,0 +1,363 @@
+"""
+MedCore AI — Full Database Seed Script
+Clears existing data and inserts realistic dummy data for ML training
+Run: python seed_data.py
+"""
+
+import psycopg2
+import bcrypt
+import random
+import uuid
+from datetime import datetime, date, timedelta
+from dotenv import load_dotenv
+import os
+
+load_dotenv()
+DB_URL = os.getenv("DATABASE_URL")
+
+# ── Indian names pool ─────────────────────────────────────────────────────────
+FIRST_NAMES_M = [
+    "Arjun","Vikram","Rahul","Suresh","Anil","Ravi","Karthik","Deepak",
+    "Sanjay","Mahesh","Rajesh","Pradeep","Venkat","Ganesh","Ramesh",
+    "Anand","Dinesh","Sunil","Ajay","Vijay","Arun","Naveen","Praveen",
+    "Harish","Girish","Mohan","Gopal","Ashok","Satish","Naresh",
+    "Balaji","Murali","Sridhar","Krishnan","Senthil","Manoj","Nikhil",
+    "Rohan","Varun","Tarun","Shiva","Prasad","Srikanth","Santosh","Pratap",
+    "Balachandar","Selvam","Murugan","Kumaran","Durai"
+]
+
+FIRST_NAMES_F = [
+    "Priya","Anitha","Lakshmi","Meena","Kavitha","Sangeetha","Divya",
+    "Nithya","Revathi","Padma","Usha","Vijaya","Malathi","Radha","Geetha",
+    "Rekha","Sujatha","Kamala","Nalini","Bharathi","Saranya","Deepa",
+    "Archana","Sowmya","Lavanya","Aishwarya","Hema","Jaya","Suganya",
+    "Ranjitha","Kiruthiga","Nivetha","Pooja","Sneha","Madhuri","Swathi",
+    "Keerthana","Brindha","Mythili","Janani","Vasantha","Lalitha","Sumathi",
+    "Chandra","Parvathi","Saraswathi","Ambika","Nandita","Vimala","Meenakshi"
+]
+
+LAST_NAMES = [
+    "Kumar","Sharma","Patel","Reddy","Nair","Pillai","Iyer","Rao",
+    "Krishnan","Murugan","Selvam","Rajan","Venkatesh","Subramaniam",
+    "Natarajan","Sundaram","Balakrishnan","Ramaswamy","Annamalai",
+    "Chandrasekaran","Govindarajan","Sivasubramanian","Ramachandran",
+    "Narayanan","Venkatesan","Muthuswamy","Palaniswamy","Dhandapani",
+    "Arunachalam","Rajagopal","Balasubramanian","Thirumalai","Annamalai",
+    "Devarajan","Sureshkumar","Jayaraman","Manoharan","Periyasamy",
+    "Somasundaram","Radhakrishnan","Palanisamy","Kathirvel","Duraisamy",
+    "Thiagarajan","Muthukumar","Ganesan","Arumugam","Shanmugam","Rajendran"
+]
+
+SPECIALIZATIONS = [
+    "General Medicine",
+    "Cardiology",
+    "Dermatology",
+    "Orthopedics",
+    "Pediatrics",
+    "Neurology",
+    "Gynecology",
+    "Psychiatry",
+]
+
+REASONS = [
+    "Fever and cold","Headache","Back pain","Chest pain","Skin rash",
+    "Stomach ache","Knee pain","Cough","Shortness of breath","Dizziness",
+    "Fatigue","Joint pain","High blood pressure","Diabetes follow-up",
+    "Anxiety and stress","Sleep problems","Weight management","Migraine",
+    "Allergy consultation","Routine checkup","Eye strain","Neck pain",
+    "Muscle cramps","Palpitations","Vomiting","Ear pain","Throat infection",
+    "Urinary issues","Numbness in hands","Follow-up visit"
+]
+
+STATUSES = ["scheduled", "completed", "cancelled"]
+STATUS_WEIGHTS = [0.25, 0.55, 0.20]  # realistic distribution
+
+def random_phone():
+    return f"+91{random.randint(7000000000, 9999999999)}"
+
+def random_dob(min_age=18, max_age=75):
+    days = random.randint(min_age * 365, max_age * 365)
+    return (date.today() - timedelta(days=days)).strftime("%Y-%m-%d")
+
+def hash_password(pwd):
+    return bcrypt.hashpw(pwd.encode(), bcrypt.gensalt()).decode()
+
+def random_appointment_date(status):
+    today = date.today()
+    if status == "scheduled":
+        # Future — next 2 months
+        days_ahead = random.randint(1, 60)
+        d = today + timedelta(days=days_ahead)
+    else:
+        # Past — last 6 months
+        days_ago = random.randint(1, 180)
+        d = today - timedelta(days=days_ago)
+    # Only weekdays
+    while d.weekday() >= 5:
+        d += timedelta(days=1)
+    # Random slot between 9am and 5pm
+    hour   = random.choice([9,9,10,10,11,11,14,14,15,15,16])
+    minute = random.choice([0, 30])
+    return datetime(d.year, d.month, d.day, hour, minute)
+
+print("=" * 60)
+print("  MedCore AI — Database Seed Script")
+print("=" * 60)
+print(f"  Started: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+print("-" * 60)
+
+conn = psycopg2.connect(DB_URL)
+cur  = conn.cursor()
+
+try:
+    # ── STEP 1: Clear existing data ───────────────────────────────
+    print("\n[1/5] Clearing existing data...")
+    cur.execute("DELETE FROM doctor_leaves")
+    cur.execute("DELETE FROM appointments")
+    cur.execute("DELETE FROM clinical_notes")
+    cur.execute("DELETE FROM doctor_schedules")
+    cur.execute("DELETE FROM doctors WHERE user_id IN (SELECT user_id FROM users WHERE role='doctor')")
+    cur.execute("DELETE FROM patients WHERE user_id IN (SELECT user_id FROM users WHERE role='patient')")
+    cur.execute("DELETE FROM users WHERE role IN ('doctor','patient')")
+    conn.commit()
+    print("  Cleared all existing patients, doctors, appointments")
+
+    # ── STEP 2: Create doctors (20) ───────────────────────────────
+    print("\n[2/5] Creating 20 doctors...")
+    doctor_ids = []
+    used_emails = set()
+
+    # Fixed demo doctors with known credentials
+    DEMO_DOCTORS = [
+        {"first_name": "Priya",   "last_name": "Sharma",  "specialization": "General Medicine", "email": "doctor@medcore.ai",  "password": "admin123"},
+        {"first_name": "Rajkumar","last_name": "Nair",    "specialization": "Cardiology",        "email": "doctor2@medcore.ai", "password": "admin123"},
+    ]
+    for d in DEMO_DOCTORS:
+        used_emails.add(d["email"])
+        fhir_id  = str(uuid.uuid4())
+        pwd_hash = hash_password(d["password"])
+        cur.execute("INSERT INTO users (email, password_hash, role) VALUES (%s,%s,'doctor') RETURNING user_id",
+                    (d["email"], pwd_hash))
+        user_id = cur.fetchone()[0]
+        cur.execute("""
+            INSERT INTO doctors (user_id, first_name, last_name, specialization,
+             license_number, phone, email, fhir_id)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s) RETURNING doctor_id
+        """, (user_id, d["first_name"], d["last_name"], d["specialization"],
+              f"MCI{random.randint(10000,99999)}A", random_phone(), d["email"], fhir_id))
+        doctor_id = cur.fetchone()[0]
+        doctor_ids.append(doctor_id)
+        for day in range(5):
+            cur.execute("INSERT INTO doctor_schedules (doctor_id, day_of_week, start_time, end_time, slot_duration) VALUES (%s,%s,'09:00','17:00',30)",
+                        (doctor_id, day))
+        print(f"  [DEMO] Dr. {d['first_name']} {d['last_name']} → {d['email']} / {d['password']}")
+
+    for i in range(20):
+        gender     = random.choice(["male", "female"])
+        first_name = random.choice(FIRST_NAMES_M if gender == "male" else FIRST_NAMES_F)
+        last_name  = random.choice(LAST_NAMES)
+        spec       = SPECIALIZATIONS[i % len(SPECIALIZATIONS)]
+        email      = f"dr.{first_name.lower()}.{last_name.lower()}{i}@medcore.ai"
+        while email in used_emails:
+            email = f"dr.{first_name.lower()}.{last_name.lower()}{i}{random.randint(1,99)}@medcore.ai"
+        used_emails.add(email)
+        phone      = random_phone()
+        license_no = f"MCI{random.randint(10000,99999)}{chr(65+i%26)}"
+        fhir_id    = str(uuid.uuid4())
+        pwd_hash   = hash_password("Doctor@123")
+
+        # users row
+        cur.execute("""
+            INSERT INTO users (email, password_hash, role)
+            VALUES (%s, %s, 'doctor') RETURNING user_id
+        """, (email, pwd_hash))
+        user_id = cur.fetchone()[0]
+
+        # doctors row
+        cur.execute("""
+            INSERT INTO doctors
+            (user_id, first_name, last_name, specialization,
+             license_number, phone, email, fhir_id)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s) RETURNING doctor_id
+        """, (user_id, first_name, last_name, spec,
+              license_no, phone, email, fhir_id))
+        doctor_id = cur.fetchone()[0]
+        doctor_ids.append(doctor_id)
+
+        # doctor_schedules Mon-Fri 9-5
+        for day in range(5):
+            cur.execute("""
+                INSERT INTO doctor_schedules
+                (doctor_id, day_of_week, start_time, end_time, slot_duration)
+                VALUES (%s,%s,'09:00','17:00',30)
+            """, (doctor_id, day))
+
+        print(f"  Dr. {first_name} {last_name} ({spec})")
+
+    conn.commit()
+    print(f"  Created {len(doctor_ids)} doctors with schedules")
+
+    # ── STEP 3: Create patients (200) ────────────────────────────
+    print("\n[3/5] Creating 200 patients...")
+    patient_ids = []
+    used_emails_p = set()
+
+    # Fixed demo patients with known credentials
+    DEMO_PATIENTS = [
+        {"first_name": "Rajesh",  "last_name": "Natarajan", "email": "patient@medcore.ai",  "password": "admin123",  "gender": "male",   "dob": "1999-02-16"},
+        {"first_name": "Preethi", "last_name": "Rajan",     "email": "patient2@medcore.ai", "password": "admin123",  "gender": "female", "dob": "1995-06-20"},
+    ]
+    for p in DEMO_PATIENTS:
+        used_emails_p.add(p["email"])
+        fhir_id  = str(uuid.uuid4())
+        pwd_hash = hash_password(p["password"])
+        cur.execute("INSERT INTO users (email, password_hash, role) VALUES (%s,%s,'patient') RETURNING user_id",
+                    (p["email"], pwd_hash))
+        user_id = cur.fetchone()[0]
+        cur.execute("""
+            INSERT INTO patients (user_id, first_name, last_name, date_of_birth,
+             gender, phone, email, fhir_id)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s) RETURNING patient_id
+        """, (user_id, p["first_name"], p["last_name"], p["dob"],
+              p["gender"], random_phone(), p["email"], fhir_id))
+        patient_id = cur.fetchone()[0]
+        patient_ids.append(patient_id)
+        print(f"  [DEMO] {p['first_name']} {p['last_name']} → {p['email']} / {p['password']}")
+
+    for i in range(200):
+        gender     = random.choice(["male", "female"])
+        first_name = random.choice(FIRST_NAMES_M if gender == "male" else FIRST_NAMES_F)
+        last_name  = random.choice(LAST_NAMES)
+        email      = f"{first_name.lower()}.{last_name.lower()}{i}@gmail.com"
+        while email in used_emails_p:
+            email = f"{first_name.lower()}.{last_name.lower()}{i}{random.randint(1,99)}@gmail.com"
+        used_emails_p.add(email)
+        phone      = random_phone()
+        dob        = random_dob()
+        fhir_id    = str(uuid.uuid4())
+        pwd_hash   = hash_password("Patient@123")
+
+        # users row
+        cur.execute("""
+            INSERT INTO users (email, password_hash, role)
+            VALUES (%s,%s,'patient') RETURNING user_id
+        """, (email, pwd_hash))
+        user_id = cur.fetchone()[0]
+
+        # patients row
+        cur.execute("""
+            INSERT INTO patients
+            (user_id, first_name, last_name, date_of_birth,
+             gender, phone, email, fhir_id)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s) RETURNING patient_id
+        """, (user_id, first_name, last_name, dob,
+              gender, phone, email, fhir_id))
+        patient_id = cur.fetchone()[0]
+        patient_ids.append(patient_id)
+
+    conn.commit()
+    print(f"  Created {len(patient_ids)} patients")
+
+    # ── STEP 4: Create appointments (600) ────────────────────────
+    print("\n[4/5] Creating 600 appointments...")
+    appt_count = 0
+    used_slots  = set()
+
+    for _ in range(600):
+        patient_id = random.choice(patient_ids)
+        doctor_id  = random.choice(doctor_ids)
+        status     = random.choices(STATUSES, STATUS_WEIGHTS)[0]
+        reason     = random.choice(REASONS)
+        appt_date  = random_appointment_date(status)
+        no_show_risk = round(random.uniform(5.0, 85.0), 1)
+
+        # Avoid duplicate same doctor+slot
+        slot_key = (doctor_id, appt_date.strftime("%Y-%m-%d %H:%M"))
+        if slot_key in used_slots:
+            continue
+        used_slots.add(slot_key)
+
+        cur.execute("""
+            INSERT INTO appointments
+            (patient_id, doctor_id, appointment_date,
+             status, reason, no_show_risk)
+            VALUES (%s,%s,%s,%s,%s,%s)
+        """, (patient_id, doctor_id, appt_date,
+              status, reason, no_show_risk))
+        appt_count += 1
+
+    conn.commit()
+    print(f"  Created {appt_count} appointments")
+
+    # ── STEP 5: Create doctor leaves (60) ────────────────────────
+    print("\n[5/5] Creating doctor leave records...")
+    leave_count = 0
+    today = date.today()
+
+    for doctor_id in random.sample(doctor_ids, 15):
+        # 2-4 leaves per doctor
+        for _ in range(random.randint(2, 4)):
+            days_offset  = random.randint(-30, 60)
+            leave_date   = today + timedelta(days=days_offset)
+            # Skip weekends
+            while leave_date.weekday() >= 5:
+                leave_date += timedelta(days=1)
+
+            block_type = random.choice(["full_day","full_day","hourly"])
+            if block_type == "hourly":
+                start_h = random.choice([9,10,11,14,15])
+                end_h   = start_h + random.choice([1,2])
+                cur.execute("""
+                    INSERT INTO doctor_leaves
+                    (doctor_id, leave_date, block_type,
+                     block_start, block_end, reason)
+                    VALUES (%s,%s,'hourly',%s,%s,%s)
+                """, (doctor_id, leave_date,
+                      f"{start_h:02d}:00", f"{end_h:02d}:00",
+                      random.choice(["Personal work","Meeting","Training"])))
+            else:
+                cur.execute("""
+                    INSERT INTO doctor_leaves
+                    (doctor_id, leave_date, block_type, reason)
+                    VALUES (%s,%s,'full_day',%s)
+                """, (doctor_id, leave_date,
+                      random.choice(["Personal","Medical","Conference","Holiday"])))
+            leave_count += 1
+
+    conn.commit()
+    print(f"  Created {leave_count} leave records")
+
+    # ── SUMMARY ──────────────────────────────────────────────────
+    print("\n" + "=" * 60)
+    print("  SEED COMPLETE — MedCore AI")
+    print("=" * 60)
+
+    cur.execute("SELECT COUNT(*) FROM users WHERE role='doctor'")
+    print(f"  Doctors     : {cur.fetchone()[0]}")
+    cur.execute("SELECT COUNT(*) FROM users WHERE role='patient'")
+    print(f"  Patients    : {cur.fetchone()[0]}")
+    cur.execute("SELECT COUNT(*) FROM appointments")
+    print(f"  Appointments: {cur.fetchone()[0]}")
+    cur.execute("SELECT COUNT(*) FROM doctor_leaves")
+    print(f"  Leave records: {cur.fetchone()[0]}")
+    cur.execute("SELECT status, COUNT(*) FROM appointments GROUP BY status ORDER BY status")
+    print("  Appointment breakdown:")
+    for row in cur.fetchall():
+        print(f"    {row[0]:<12} {row[1]}")
+    print("=" * 60)
+    print(f"  Finished: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print("\n  Demo login credentials:")
+    print("  ─" * 30)
+    print("  ADMIN   : admin@medcore.ai      / admin123")
+    print("  DOCTOR  : doctor@medcore.ai     / admin123  (Dr. Priya Sharma — General Medicine)")
+    print("  DOCTOR  : doctor2@medcore.ai    / admin123  (Dr. Rajkumar Nair — Cardiology)")
+    print("  PATIENT : patient@medcore.ai    / admin123  (Rajesh Natarajan)")
+    print("  PATIENT : patient2@medcore.ai   / admin123  (Preethi Rajan)")
+
+except Exception as e:
+    conn.rollback()
+    print(f"\nERROR: {e}")
+    raise
+finally:
+    cur.close()
+    conn.close()

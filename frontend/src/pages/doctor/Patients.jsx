@@ -8,20 +8,20 @@ import {
   ChevronRight, AlertCircle
 } from "lucide-react";
 
-function RiskBadge({ visits }) {
+function VisitBadge({ visits }) {
   if (visits >= 5) return (
-    <span className="px-2 py-0.5 bg-red-50 text-red-600 border border-red-100 rounded-full text-xs font-medium">
-      High Risk
+    <span className="px-2 py-0.5 bg-blue-50 text-blue-600 border border-blue-100 rounded-full text-xs font-medium">
+      Frequent
     </span>
   );
   if (visits >= 3) return (
-    <span className="px-2 py-0.5 bg-amber-50 text-amber-600 border border-amber-100 rounded-full text-xs font-medium">
-      Medium
+    <span className="px-2 py-0.5 bg-slate-50 text-slate-500 border border-slate-200 rounded-full text-xs font-medium">
+      Regular
     </span>
   );
   return (
-    <span className="px-2 py-0.5 bg-green-50 text-green-600 border border-green-100 rounded-full text-xs font-medium">
-      Low Risk
+    <span className="px-2 py-0.5 bg-emerald-50 text-emerald-600 border border-emerald-100 rounded-full text-xs font-medium">
+      New
     </span>
   );
 }
@@ -103,9 +103,9 @@ export default function Patients() {
         {[
           { label: "Total Patients", value: patients.length,
             color: "text-blue-600",    bg: "bg-blue-50"    },
-          { label: "High Risk",
+          { label: "Frequent Visitors",
             value: patients.filter(p => p.total_visits >= 5).length,
-            color: "text-red-600",     bg: "bg-red-50"     },
+            color: "text-blue-600",    bg: "bg-blue-50"    },
           { label: "New This Month",
             value: patients.filter(p => {
               const last = new Date(p.last_visit);
@@ -160,7 +160,7 @@ export default function Patients() {
                     <p className="text-slate-800 text-sm font-semibold">
                       {patient.first_name} {patient.last_name}
                     </p>
-                    <RiskBadge visits={patient.total_visits} />
+                    <VisitBadge visits={patient.total_visits} />
                   </div>
                   <div className="flex items-center gap-3 mt-0.5">
                     <span className="text-slate-400 text-xs">

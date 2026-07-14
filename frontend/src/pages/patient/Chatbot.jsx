@@ -8,62 +8,51 @@ import {
 
 export default function Chatbot() {
 
-  // ── STATE ──────────────────────────────────────────────────────
   const [messages, setMessages] = useState([
     {
       role:    "assistant",
-      content: "Hello! I'm your AI health assistant powered by Gemini. I can answer questions about your health records, medications, appointments, and general health advice. How can I help you today?",
+      content: "Hello! I'm your AI health assistant. I can answer questions about your appointments, medications, health records, and general health advice. How can I help you today?",
       time:    new Date().toLocaleTimeString("en-IN", {
         hour: "2-digit", minute: "2-digit"
       })
     }
   ]);
 
-  const [input,   setInput]   = useState("");
-  const [loading, setLoading] = useState(false);
-
-  // Dynamic suggested questions — starts with defaults
-  // gets replaced with patient-specific questions from API
+  const [input,     setInput]     = useState("");
+  const [loading,   setLoading]   = useState(false);
   const [suggested, setSuggested] = useState([
-    "What medications am I currently taking?",
     "When is my next appointment?",
-    "What does my diagnosis mean?",
+    "What medications am I taking?",
     "Are my vitals normal?",
+    "How can I improve my health?",
   ]);
 
   const bottomRef = useRef(null);
 
-  // ── LOAD DYNAMIC SUGGESTED QUESTIONS ON MOUNT ──────────────────
-  // Runs once when page loads
-  // Calls backend which checks patient's actual data
-  // and returns relevant questions
+  // Load patient-specific suggested questions on mount
   useEffect(() => {
     const loadSuggested = async () => {
       try {
         const res = await getSuggestedQuestions();
-        // Only update if backend returned questions
-        if (res.data.questions.length > 0) {
+        if (res.data.questions && res.data.questions.length > 0) {
           setSuggested(res.data.questions);
         }
       } catch (err) {
-        // If API fails — keep the default questions above
-        console.log("Using default suggested questions");
+        // Keep default questions if API fails
       }
     };
     loadSuggested();
-  }, []); // [] = run only once when component loads
+  }, []);
 
-  // ── AUTO SCROLL TO BOTTOM ON NEW MESSAGE ───────────────────────
+  // Auto scroll to bottom on new message
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
-  // ── SEND MESSAGE ───────────────────────────────────────────────
   const sendMessage = async (text) => {
     const userText = text || input.trim();
     if (!userText) return;
 
-    // Add user message to chat
     const userMsg = {
       role:    "user",
       content: userText,
@@ -76,9 +65,7 @@ export default function Chatbot() {
     setLoading(true);
 
     try {
-      // Call backend → Gemini with patient context
       const res = await chat({ message: userText });
-
       const aiMsg = {
         role:    "assistant",
         content: res.data.reply,
@@ -87,7 +74,6 @@ export default function Chatbot() {
         })
       };
       setMessages(prev => [...prev, aiMsg]);
-
     } catch (err) {
       setMessages(prev => [...prev, {
         role:    "assistant",
@@ -102,21 +88,20 @@ export default function Chatbot() {
     }
   };
 
-  // ── RENDER ─────────────────────────────────────────────────────
   return (
     <PatientLayout>
 
-      {/* Page title */}
+      {/* Page header */}
       <div className="mb-6">
         <h1 className="text-2xl font-bold text-slate-800">AI Health Assistant</h1>
         <p className="text-slate-500 text-sm mt-1">
-          Powered by Gemini 2.5 Flash · Ask anything about your health
+          Ask anything about your health records and appointments
         </p>
       </div>
 
       <div className="grid grid-cols-4 gap-6">
 
-        {/* ── CHAT WINDOW ── */}
+        {/* ── Chat window ── */}
         <div className="col-span-3 bg-white rounded-2xl border border-slate-100 shadow-sm flex flex-col h-[600px]">
 
           {/* Chat header */}
@@ -126,23 +111,21 @@ export default function Chatbot() {
             </div>
             <div>
               <p className="text-slate-800 text-sm font-semibold">
-                MedCore AI Assistant
+                MedCore Health Assistant
               </p>
               <p className="text-green-500 text-xs flex items-center gap-1">
                 <span className="w-1.5 h-1.5 bg-green-500 rounded-full inline-block" />
-                Online · Gemini 2.5 Flash
+                Active
               </p>
             </div>
           </div>
 
-          {/* Messages list */}
+          {/* Messages */}
           <div className="flex-1 overflow-y-auto p-4 space-y-4">
             {messages.map((msg, i) => (
               <div
                 key={i}
-                className={`flex items-start gap-3 ${
-                  msg.role === "user" ? "flex-row-reverse" : ""
-                }`}
+                className={`flex items-start gap-3 ${msg.role === "user" ? "flex-row-reverse" : ""}`}
               >
                 {/* Avatar */}
                 <div className={`w-8 h-8 rounded-xl flex items-center justify-center flex-shrink-0 ${
@@ -156,10 +139,8 @@ export default function Chatbot() {
                   }
                 </div>
 
-                {/* Message bubble */}
-                <div className={`max-w-md flex flex-col ${
-                  msg.role === "user" ? "items-end" : "items-start"
-                }`}>
+                {/* Bubble */}
+                <div className={`max-w-md flex flex-col ${msg.role === "user" ? "items-end" : "items-start"}`}>
                   <div className={`px-4 py-3 rounded-2xl text-sm leading-relaxed ${
                     msg.role === "user"
                       ? "bg-navy-900 text-white rounded-tr-none"
@@ -169,9 +150,7 @@ export default function Chatbot() {
                   }`}>
                     {msg.content}
                   </div>
-                  <p className="text-slate-400 text-xs mt-1 px-1">
-                    {msg.time}
-                  </p>
+                  <p className="text-slate-400 text-xs mt-1 px-1">{msg.time}</p>
                 </div>
               </div>
             ))}
@@ -184,18 +163,14 @@ export default function Chatbot() {
                 </div>
                 <div className="bg-slate-100 rounded-2xl rounded-tl-none px-4 py-3">
                   <div className="flex gap-1 items-center h-4">
-                    <div className="w-2 h-2 bg-slate-400 rounded-full animate-bounce"
-                         style={{ animationDelay: "0ms" }} />
-                    <div className="w-2 h-2 bg-slate-400 rounded-full animate-bounce"
-                         style={{ animationDelay: "150ms" }} />
-                    <div className="w-2 h-2 bg-slate-400 rounded-full animate-bounce"
-                         style={{ animationDelay: "300ms" }} />
+                    <div className="w-2 h-2 bg-slate-400 rounded-full animate-bounce" style={{ animationDelay: "0ms" }} />
+                    <div className="w-2 h-2 bg-slate-400 rounded-full animate-bounce" style={{ animationDelay: "150ms" }} />
+                    <div className="w-2 h-2 bg-slate-400 rounded-full animate-bounce" style={{ animationDelay: "300ms" }} />
                   </div>
                 </div>
               </div>
             )}
 
-            {/* Scroll anchor */}
             <div ref={bottomRef} />
           </div>
 
@@ -227,7 +202,7 @@ export default function Chatbot() {
           </div>
         </div>
 
-        {/* ── SIDEBAR ── */}
+        {/* ── Sidebar ── */}
         <div className="col-span-1 space-y-4">
 
           {/* Suggested questions */}
@@ -239,7 +214,6 @@ export default function Chatbot() {
               </h3>
             </div>
             <div className="space-y-2">
-              {/* NOW USES suggested STATE — dynamic not static */}
               {suggested.map((q, i) => (
                 <button
                   key={i}
@@ -253,14 +227,13 @@ export default function Chatbot() {
             </div>
           </div>
 
-          {/* About card */}
+          {/* Info card */}
           <div className="bg-gradient-to-br from-navy-900 to-sky-900 rounded-2xl p-5">
             <p className="text-white/80 text-xs font-semibold uppercase tracking-wide mb-2">
-              About this AI
+              About this assistant
             </p>
             <p className="text-white/70 text-xs leading-relaxed">
-              Your AI health assistant answers based on your personal health records.
-              Always consult your doctor before making any medical decisions.
+              Your health assistant answers questions based on your personal health records and appointment history. Always consult your doctor before making any medical decisions.
             </p>
           </div>
 

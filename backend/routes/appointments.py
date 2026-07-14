@@ -292,20 +292,56 @@ def get_slots():
                     datetime.fromisoformat(str(b)).strftime("%H:%M")
                 )
 
+        # Check doctor_leaves — full day leave or hourly blocks
+        full_day_blocked = False
+        blocked_ranges   = []
+        cur.execute("""
+            SELECT block_type, block_start, block_end
+            FROM doctor_leaves
+            WHERE doctor_id = %s AND leave_date = %s
+        """, (doctor_id, date_str))
+        for row in cur.fetchall():
+            if row[0] == "full_day":
+                full_day_blocked = True
+            elif row[0] == "hourly" and row[1] and row[2]:
+                # Convert TIME columns to proper time objects for accurate comparison
+                # row[1] and row[2] are datetime.time objects from psycopg2
+                from datetime import time as dt_time
+                bs = row[1] if isinstance(row[1], dt_time) else \
+                     dt_time(*[int(x) for x in str(row[1]).split(":")[:2]])
+                be = row[2] if isinstance(row[2], dt_time) else \
+                     dt_time(*[int(x) for x in str(row[2]).split(":")[:2]])
+                blocked_ranges.append((bs, be))
+
+        if full_day_blocked:
+            return jsonify({
+                "slots":         [],
+                "message":       "Doctor is on leave this day",
+                "leave_blocked": True
+            }), 200
+
         # Build result
         now    = datetime.now()
         result = []
         for slot in slots:
-            slot_time = slot.strftime("%H:%M")
-            is_booked = slot_time in booked_times
-            is_past   = slot <= now
+            slot_time  = slot.strftime("%H:%M")
+            slot_time_ = slot.time()   # actual time object for comparison
+            is_booked  = slot_time in booked_times
+            is_past    = slot <= now
+            # Check hourly blocks using time object comparison — no string bugs
+            is_blocked = False
+            for (bs, be) in blocked_ranges:
+                if bs <= slot_time_ < be:
+                    is_blocked = True
+                    break
             result.append({
                 "datetime":  slot.isoformat(),
                 "time":      slot_time,
                 "label":     slot.strftime("%I:%M %p"),
-                "available": not is_booked and not is_past,
+                "available": not is_booked and not is_past and not is_blocked,
                 "booked":    is_booked,
-                "past":      is_past
+                "past":      is_past,
+                "blocked":   is_blocked
             })
 
         return jsonify({

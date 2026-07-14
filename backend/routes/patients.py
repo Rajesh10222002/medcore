@@ -56,14 +56,40 @@ def get_my_profile():
 @token_required
 @role_required(["patient"])
 def get_my_fhir():
-    fhir_id = request.user.get("fhir_id")
+    patient_id = request.user.get("patient_id")
+    fhir_id    = request.user.get("fhir_id")
+
+    # Read blood group from Neon first (fast, reliable)
+    neon_blood_group = None
+    conn2 = get_db()
+    cur2  = conn2.cursor()
+    try:
+        # Check if blood_group column exists first
+        cur2.execute("""
+            SELECT column_name FROM information_schema.columns
+            WHERE table_name='patients' AND column_name='blood_group'
+        """)
+        col_exists = cur2.fetchone()
+        if col_exists:
+            cur2.execute(
+                "SELECT blood_group FROM patients WHERE patient_id = %s",
+                (patient_id,)
+            )
+            bg_row = cur2.fetchone()
+            neon_blood_group = bg_row[0] if bg_row else None
+    except Exception:
+        neon_blood_group = None
+    finally:
+        cur2.close()
+        conn2.close()
 
     if not fhir_id:
         return jsonify({
             "conditions":   [],
             "medications":  [],
             "observations": [],
-            "allergies":    []
+            "allergies":    [],
+            "blood_group":  neon_blood_group
         }), 200
 
     try:
@@ -93,6 +119,43 @@ def get_my_fhir():
         observation_entries = fetch("Observation")
         allergy_entries     = fetch("AllergyIntolerance", "patient")
 
+        # Blood group — use Neon value if available, else try FHIR
+        blood_group = neon_blood_group
+        if not blood_group:
+            try:
+                bg_resp = http_req.get(
+                    f"{FHIR_URL}/Observation?subject=Patient/{fhir_id}&code=http://loinc.org|882-1&_count=5",
+                    headers={"Accept": "application/fhir+json"},
+                    timeout=8
+                )
+                if bg_resp.status_code == 200:
+                    bg_entries = bg_resp.json().get("entry", [])
+                    if bg_entries:
+                        blood_group = bg_entries[0].get("resource", {}).get("valueString", None)
+
+                # Method 2: Fallback — scan all observations for blood group code
+                if not blood_group:
+                    all_obs_resp = http_req.get(
+                        f"{FHIR_URL}/Observation?subject=Patient/{fhir_id}&_count=100",
+                        headers={"Accept": "application/fhir+json"},
+                        timeout=10
+                    )
+                    if all_obs_resp.status_code == 200:
+                        for entry in all_obs_resp.json().get("entry", []):
+                            res  = entry.get("resource", {})
+                            code = res.get("code", {})
+                            codings   = code.get("coding", [])
+                            code_text = code.get("text", "")
+                            is_blood_group = (
+                                code_text.lower() in ["blood group", "abo and rh group"] or
+                                any(c.get("code") == "882-1" for c in codings)
+                            )
+                            if is_blood_group and res.get("valueString"):
+                                blood_group = res.get("valueString")
+                                break
+            except Exception:
+                pass
+
         # Parse Conditions
         for entry in condition_entries:
             res  = entry.get("resource", {})
@@ -115,18 +178,44 @@ def get_my_fhir():
                 "date":   res.get("authoredOn", "")
             })
 
-        # Parse Observations
+        # Parse Observations — deduplicate to latest per vital type, skip blood group
+        all_obs = []
         for entry in observation_entries:
             res   = entry.get("resource", {})
             code  = res.get("code", {})
             value = res.get("valueQuantity", {})
-            observations.append({
-                "name":  code.get("text") or
-                         code.get("coding", [{}])[0].get("display", "Unknown"),
+            date_ = res.get("effectiveDateTime", "")
+            name  = code.get("text") or \
+                    code.get("coding", [{}])[0].get("display", "Unknown")
+
+            # Skip blood group — shown separately
+            codings = code.get("coding", [])
+            is_blood_group = (
+                name.lower() in ["blood group", "abo and rh group"] or
+                any(c.get("code") == "882-1" for c in codings)
+            )
+            if is_blood_group:
+                continue
+
+            # Only numeric vitals
+            if not value.get("value"):
+                continue
+
+            all_obs.append({
+                "name":  name,
                 "value": str(value.get("value", "")),
                 "unit":  value.get("unit", ""),
-                "date":  res.get("effectiveDateTime", "")
+                "date":  date_
             })
+
+        # Sort newest first, then keep only latest per vital
+        all_obs.sort(key=lambda x: x.get("date", ""), reverse=True)
+        seen = set()
+        for obs in all_obs:
+            key = obs["name"].lower().strip()
+            if key not in seen:
+                seen.add(key)
+                observations.append(obs)
 
         # Parse Allergies
         for entry in allergy_entries:
@@ -143,7 +232,8 @@ def get_my_fhir():
             "conditions":   conditions,
             "medications":  medications,
             "observations": observations,
-            "allergies":    allergies
+            "allergies":    allergies,
+            "blood_group":  blood_group
         }), 200
 
     except Exception as e:

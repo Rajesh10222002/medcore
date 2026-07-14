@@ -5,7 +5,8 @@ import DoctorLayout from "../../components/DoctorLayout";
 import {
   getDoctorPatient, saveVitals,
   getPatientSummaryAI, checkDrugInteractions,
-  addDiagnosis, addMedication, addAllergy
+  addDiagnosis, addMedication, addAllergy,
+  setBloodGroup, getBloodGroup
 } from "../../api/api";
 import { showSuccess, showError } from "../../components/shared/Toast";
 import {
@@ -77,15 +78,41 @@ export default function PatientDetail() {
   const [showAddDiagnosis,  setShowAddDiagnosis]  = useState(false);
   const [showAddMedication, setShowAddMedication] = useState(false);
   const [showAddAllergy,    setShowAddAllergy]     = useState(false);
+  const [showBloodGroup,    setShowBloodGroup]     = useState(false);
 
   // Add forms
   const [diagnosisForm,  setDiagnosisForm]  = useState({ display: "", code: "" });
   const [medicationForm, setMedicationForm] = useState({ name: "", dosage: "", frequency: "" });
   const [allergyForm,    setAllergyForm]    = useState({ name: "", severity: "mild" });
+  const [bloodGroupForm, setBloodGroupForm] = useState({ blood_group: "" });
   const [saving,         setSaving]         = useState(false);
+
+  // Blood group state
+  const [bloodGroup,     setBloodGroup_]    = useState(null);
+  const [savingBG,       setSavingBG]       = useState(false);
 
   // ── LOAD ───────────────────────────────
   useEffect(() => { loadPatient(); }, [id]);
+
+  // Auto-load AI summary after patient data loads
+  useEffect(() => {
+    if (id) {
+      setLoadingSummary(true);
+      getPatientSummaryAI(id)
+        .then(res => setAiSummary(res.data.summary))
+        .catch(() => setAiSummary(""))
+        .finally(() => setLoadingSummary(false));
+    }
+  }, [id]);
+
+  // Auto-load blood group
+  useEffect(() => {
+    if (id) {
+      getBloodGroup(id)
+        .then(res => setBloodGroup_(res.data.blood_group))
+        .catch(() => {});
+    }
+  }, [id]);
 
   const loadPatient = async () => {
     try {
@@ -173,6 +200,25 @@ export default function PatientDetail() {
       showError("Failed to add allergy");
     } finally {
       setSaving(false);
+    }
+  };
+
+  // ── BLOOD GROUP ────────────────────────
+  const handleSaveBloodGroup = async () => {
+    if (!bloodGroupForm.blood_group) {
+      showError("Please select a blood group"); return;
+    }
+    setSavingBG(true);
+    try {
+      await setBloodGroup(id, bloodGroupForm);
+      showSuccess(`Blood group ${bloodGroupForm.blood_group} saved to patient record.`);
+      setBloodGroup_(bloodGroupForm.blood_group);
+      setShowBloodGroup(false);
+      setBloodGroupForm({ blood_group: "" });
+    } catch {
+      showError("Failed to save blood group");
+    } finally {
+      setSavingBG(false);
     }
   };
 
@@ -267,12 +313,32 @@ export default function PatientDetail() {
             </h1>
             <div className="flex items-center gap-3 mt-1 flex-wrap">
               <span className="text-slate-500 text-sm">
-                {patient?.age} years · {patient?.gender}
+                {(() => {
+                  // If backend returns 0, calculate from date_of_birth
+                  if (patient?.age && patient.age > 0) return `${patient.age} years`;
+                  if (patient?.date_of_birth) {
+                    const dob  = new Date(patient.date_of_birth);
+                    const today = new Date();
+                    const age   = today.getFullYear() - dob.getFullYear() -
+                      (today < new Date(today.getFullYear(), dob.getMonth(), dob.getDate()) ? 1 : 0);
+                    return age > 0 ? `${age} years` : "Age unknown";
+                  }
+                  return "Age unknown";
+                })()} · {patient?.gender}
               </span>
               <span className="text-slate-300">·</span>
               <span className="text-slate-500 text-sm">{patient?.phone}</span>
               <span className="text-slate-300">·</span>
               <span className="text-slate-500 text-sm">{patient?.email}</span>
+              {/* Blood group badge */}
+              {bloodGroup && (
+                <>
+                  <span className="text-slate-300">·</span>
+                  <span className="flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-red-50 text-red-600 border border-red-100">
+                    <Heart size={11} /> {bloodGroup}
+                  </span>
+                </>
+              )}
             </div>
           </div>
           <div className="flex gap-2 flex-shrink-0 flex-wrap justify-end">
@@ -299,6 +365,12 @@ export default function PatientDetail() {
               className="flex items-center gap-2 px-3 py-2 bg-red-500 hover:bg-red-600 text-white text-sm font-medium rounded-xl transition-colors"
             >
               <Plus size={15} /> Allergy
+            </button>
+            <button
+              onClick={() => setShowBloodGroup(true)}
+              className="flex items-center gap-2 px-3 py-2 bg-rose-500 hover:bg-rose-600 text-white text-sm font-medium rounded-xl transition-colors"
+            >
+              <Heart size={15} /> Blood Group
             </button>
             <button
               onClick={() => navigate(`/doctor/notes?patient=${id}`)}
@@ -861,6 +933,54 @@ export default function PatientDetail() {
                 {saving
                   ? <><Loader2 size={16} className="animate-spin" /> Saving...</>
                   : <><CheckCircle size={16} /> Save Allergy</>
+                }
+              </button>
+            </div>
+          </Modal>
+        )}
+      </AnimatePresence>
+
+      {/* ── Blood Group Modal ── */}
+      <AnimatePresence>
+        {showBloodGroup && (
+          <Modal title="Set Blood Group" onClose={() => setShowBloodGroup(false)}>
+            <div className="space-y-4">
+              <p className="text-slate-500 text-sm">
+                Select the patient's blood group. This will be saved to their health record and visible to them.
+              </p>
+              {/* Blood group grid */}
+              <div className="grid grid-cols-4 gap-2">
+                {["A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-"].map(bg => (
+                  <button
+                    key={bg}
+                    onClick={() => setBloodGroupForm({ blood_group: bg })}
+                    className={`py-3 rounded-xl text-sm font-bold transition-all ${
+                      bloodGroupForm.blood_group === bg
+                        ? "bg-rose-500 text-white shadow-lg shadow-rose-200"
+                        : "bg-slate-50 text-slate-600 border border-slate-200 hover:border-rose-300 hover:bg-rose-50"
+                    }`}
+                  >
+                    {bg}
+                  </button>
+                ))}
+              </div>
+              {/* Current blood group */}
+              {bloodGroup && (
+                <div className="flex items-center gap-2 px-3 py-2.5 bg-rose-50 rounded-xl border border-rose-100">
+                  <Heart size={14} className="text-rose-500" />
+                  <p className="text-rose-700 text-sm">
+                    Current blood group: <strong>{bloodGroup}</strong>
+                  </p>
+                </div>
+              )}
+              <button
+                onClick={handleSaveBloodGroup}
+                disabled={savingBG || !bloodGroupForm.blood_group}
+                className="w-full flex items-center justify-center gap-2 bg-rose-500 hover:bg-rose-600 disabled:opacity-50 text-white font-semibold py-2.5 rounded-xl transition-colors"
+              >
+                {savingBG
+                  ? <><Loader2 size={16} className="animate-spin" /> Saving...</>
+                  : <><Heart size={16} /> Save Blood Group</>
                 }
               </button>
             </div>

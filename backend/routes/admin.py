@@ -384,3 +384,174 @@ def get_all_appointments():
     finally:
         cur.close()
         conn.close()
+
+# ─────────────────────────────────────────
+# POST /api/admin/nl-query
+# Natural language analytics query
+# Admin types a question → Gemini answers
+# using live KPI data from the DB
+# ─────────────────────────────────────────
+@admin_bp.route("/admin/nl-query", methods=["POST"])
+@token_required
+@role_required(["admin"])
+def nl_query():
+    data     = request.json
+    question = data.get("question", "").strip()
+
+    if not question:
+        return jsonify({"error": "Question required"}), 400
+
+    conn = get_db()
+    cur  = conn.cursor()
+    try:
+        # Pull rich data snapshot for context
+        cur.execute("SELECT COUNT(*) FROM patients")
+        total_patients = cur.fetchone()[0]
+
+        cur.execute("SELECT COUNT(*) FROM doctors")
+        total_doctors = cur.fetchone()[0]
+
+        cur.execute("SELECT COUNT(*) FROM appointments")
+        total_appointments = cur.fetchone()[0]
+
+        cur.execute("SELECT COUNT(*) FROM appointments WHERE status='scheduled'")
+        scheduled = cur.fetchone()[0]
+
+        cur.execute("SELECT COUNT(*) FROM appointments WHERE status='completed'")
+        completed = cur.fetchone()[0]
+
+        cur.execute("SELECT COUNT(*) FROM appointments WHERE status='cancelled'")
+        cancelled = cur.fetchone()[0]
+
+        cur.execute("SELECT COUNT(*) FROM appointments WHERE DATE(appointment_date) = CURRENT_DATE")
+        today_appointments = cur.fetchone()[0]
+
+        cur.execute("""
+            SELECT COUNT(*) FROM patients
+            WHERE DATE_TRUNC('month', created_at) = DATE_TRUNC('month', CURRENT_DATE)
+        """)
+        new_this_month = cur.fetchone()[0]
+
+        cur.execute("""
+            SELECT COUNT(*) FROM appointments
+            WHERE appointment_date >= CURRENT_DATE - INTERVAL '7 days'
+        """)
+        last_7_days = cur.fetchone()[0]
+
+        cur.execute("""
+            SELECT COUNT(*) FROM appointments
+            WHERE appointment_date >= CURRENT_DATE - INTERVAL '30 days'
+        """)
+        last_30_days = cur.fetchone()[0]
+
+        # Appointments per day last 7 days
+        cur.execute("""
+            SELECT DATE(appointment_date), COUNT(*)
+            FROM appointments
+            WHERE appointment_date >= CURRENT_DATE - INTERVAL '7 days'
+            GROUP BY DATE(appointment_date)
+            ORDER BY 1 ASC
+        """)
+        daily = [{"date": str(r[0]), "count": r[1]} for r in cur.fetchall()]
+
+        # Top doctors
+        cur.execute("""
+            SELECT d.first_name || ' ' || d.last_name, d.specialization,
+                   COUNT(a.appointment_id) as total
+            FROM doctors d
+            LEFT JOIN appointments a ON d.doctor_id = a.doctor_id
+            GROUP BY d.doctor_id, d.first_name, d.last_name, d.specialization
+            ORDER BY total DESC
+            LIMIT 5
+        """)
+        top_docs = [{"name": r[0], "specialization": r[1], "appointments": r[2]}
+                    for r in cur.fetchall()]
+
+        # Specialization breakdown
+        cur.execute("""
+            SELECT d.specialization, COUNT(a.appointment_id) as total
+            FROM doctors d
+            LEFT JOIN appointments a ON d.doctor_id = a.doctor_id
+            GROUP BY d.specialization
+            ORDER BY total DESC
+        """)
+        by_spec = [{"specialization": r[0], "appointments": r[1]} for r in cur.fetchall()]
+
+        # Cancellation rate
+        cancel_rate = round((cancelled / total_appointments * 100), 1) if total_appointments > 0 else 0
+
+        # Build context string
+        today_str = date.today().strftime("%d %B %Y")
+        context = f"""
+MedCore AI Healthcare System — Live Analytics Data
+Report generated: {today_str}
+
+PATIENTS:
+- Total registered patients: {total_patients}
+- New patients this month: {new_this_month}
+
+DOCTORS:
+- Total doctors: {total_doctors}
+- By specialization: {', '.join([f"{s['specialization']} ({s['appointments']} appts)" for s in by_spec])}
+
+APPOINTMENTS:
+- Total all time: {total_appointments}
+- Today: {today_appointments}
+- Last 7 days: {last_7_days}
+- Last 30 days: {last_30_days}
+- Currently scheduled: {scheduled}
+- Completed: {completed}
+- Cancelled: {cancelled}
+- Cancellation rate: {cancel_rate}%
+
+DAILY TREND (last 7 days):
+{chr(10).join([f"  {d['date']}: {d['count']} appointments" for d in daily])}
+
+TOP DOCTORS BY APPOINTMENTS:
+{chr(10).join([f"  {i+1}. Dr. {d['name']} ({d['specialization']}): {d['appointments']} appointments" for i, d in enumerate(top_docs)])}
+"""
+
+        # Call Ollama with context + question
+        import requests as req
+        ollama_url   = os.getenv("OLLAMA_URL", "http://localhost:11434")
+        ollama_model = os.getenv("OLLAMA_MODEL", "llama3.2:3b")
+
+        prompt = f"""You are an AI analytics assistant for MedCore AI, a healthcare management system.
+You have access to live system data. Answer the admin's question clearly and concisely.
+
+{context}
+
+Admin's question: {question}
+
+Instructions:
+- Answer directly using the data above
+- Use specific numbers from the data
+- Keep the response concise — 2-4 sentences or a short list
+- If the question can't be answered from the data, say so clearly
+- Do not make up numbers that aren't in the data
+- Format clearly — use bullet points if listing multiple items
+
+Answer:"""
+
+        resp = req.post(
+            f"{ollama_url}/api/generate",
+            json={"model": ollama_model, "prompt": prompt, "stream": False},
+            timeout=60
+        )
+        answer = resp.json().get("response", "Unable to process query.").strip()
+        return jsonify({
+            "answer":  answer,
+            "context": {
+                "total_patients":     total_patients,
+                "total_doctors":      total_doctors,
+                "total_appointments": total_appointments,
+                "today":              today_appointments
+            }
+        }), 200
+
+    except Exception as e:
+        print(f"NL query error: {e}")
+        return jsonify({"error": "Unable to process query at this time."}), 500
+    finally:
+        cur.close()
+        conn.close()

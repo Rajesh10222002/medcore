@@ -16,6 +16,7 @@ import Patients      from "./pages/doctor/Patients";
 import PatientDetail from "./pages/doctor/PatientDetail";
 import Notes         from "./pages/doctor/Notes";
 import Copilot       from "./pages/doctor/Copilot";
+import Schedule      from "./pages/doctor/Schedule";
 
 // Admin
 import AdminDashboard    from "./pages/admin/Dashboard";
@@ -68,6 +69,9 @@ function AppRoutes() {
       }/>
       <Route path="/doctor/notes" element={
         <ProtectedRoute role="doctor"><Notes /></ProtectedRoute>
+      }/>
+      <Route path="/doctor/schedule" element={
+        <ProtectedRoute role="doctor"><Schedule /></ProtectedRoute>
       }/>
       <Route path="/doctor/copilot" element={
         <ProtectedRoute role="doctor"><Copilot /></ProtectedRoute>

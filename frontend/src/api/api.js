@@ -43,6 +43,8 @@ export const saveVitals         = (id, d)  => axios.post(`${BASE}/doctor/vitals/
 export const addDiagnosis       = (id, d)  => axios.post(`${BASE}/doctor/diagnosis/${id}`, d);
 export const addMedication      = (id, d)  => axios.post(`${BASE}/doctor/medication/${id}`, d);
 export const addAllergy         = (id, d)  => axios.post(`${BASE}/doctor/allergy/${id}`, d);
+export const setBloodGroup      = (id, d)  => axios.post(`${BASE}/doctor/blood-group/${id}`, d);
+export const getBloodGroup      = (id)     => axios.get(`${BASE}/doctor/blood-group/${id}`);
 
 // ── AI FEATURES ───────────────────────────────────────
 export const getHealthSummaryAI    = ()       => axios.get(`${BASE}/ai/health-summary`);
@@ -52,6 +54,7 @@ export const getPatientSummaryAI   = (id)     => axios.get(`${BASE}/ai/patient-s
 export const chat                  = (data)   => axios.post(`${BASE}/ai/chat`, data);
 export const getSuggestedQuestions = ()       => axios.get(`${BASE}/ai/suggested-questions`);
 export const getCopilot            = (data)   => axios.post(`${BASE}/ai/copilot`, data);
+export const parseNote             = (data)   => axios.post(`${BASE}/ai/parse-note`, data);
 
 // ── ADMIN ─────────────────────────────────────────────
 export const getAdminKPIs         = ()     => axios.get(`${BASE}/admin/kpis`);
@@ -59,3 +62,11 @@ export const getAdminPatients     = ()     => axios.get(`${BASE}/admin/patients`
 export const getAdminDoctors      = ()     => axios.get(`${BASE}/admin/doctors`);
 export const createDoctor         = (data) => axios.post(`${BASE}/admin/doctors`, data);
 export const getAdminAppointments = ()     => axios.get(`${BASE}/admin/appointments`);
+// ── SCHEDULE (Doctor leave & calendar) ────────────────
+export const getScheduleCalendar = ()         => axios.get(`${BASE}/doctor/schedule/calendar`);
+export const getScheduleLeaves   = ()         => axios.get(`${BASE}/doctor/schedule/leaves`);
+export const getDayDetail        = (date)     => axios.get(`${BASE}/doctor/schedule/day/${date}`);
+export const addLeave            = (data)     => axios.post(`${BASE}/doctor/schedule/leave`, data);
+export const deleteLeave         = (id)       => axios.delete(`${BASE}/doctor/schedule/leave/${id}`);
+
+export const adminNLQuery = (data) => axios.post(`${BASE}/admin/nl-query`, data);
