@@ -12,12 +12,12 @@ jobs:
     runs-on: ubuntu-latest
 
     env:
-      DATABASE_URL:    ${{ secrets.DATABASE_URL }}
-      JWT_SECRET:      ${{ secrets.JWT_SECRET }}
-      FHIR_BASE_URL:   ${{ secrets.FHIR_BASE_URL }}
-      GEMINI_API_KEY:  ${{ secrets.GEMINI_API_KEY }}
-      OLLAMA_URL:      http://localhost:11434
-      OLLAMA_MODEL:    llama3.2:3b
+      DATABASE_URL:   ${{ secrets.DATABASE_URL }}
+      JWT_SECRET:     ${{ secrets.JWT_SECRET }}
+      FHIR_BASE_URL:  ${{ secrets.FHIR_BASE_URL }}
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      OLLAMA_URL:     http://localhost:11434
+      OLLAMA_MODEL:   llama3.2:3b
 
     steps:
       - name: Checkout code
@@ -28,37 +28,18 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Cache pip dependencies
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-${{ hashFiles('requirements-test.txt') }}
-          restore-keys: |
-            ${{ runner.os }}-pip-
+      - name: Install backend dependencies
+        run: pip install -r backend/requirements.txt
 
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r backend/requirements.txt
-          pip install -r requirements-test.txt
+      - name: Install test dependencies
+        run: pip install -r requirements-test.txt
 
-      - name: Run Pytest with coverage
-        run: |
-          pytest tests/ \
-            --tb=short \
-            --cov=backend \
-            --cov-report=term-missing \
-            --cov-report=xml:coverage.xml \
-            -v
+      - name: Run Pytest
+        run: pytest tests/ -v --tb=short
 
-      - name: Upload coverage report
-        uses: actions/upload-artifact@v4
+      - name: Upload results
         if: always()
+        uses: actions/upload-artifact@v4
         with:
-          name: coverage-report
-          path: coverage.xml
-
-      - name: Coverage summary
-        run: |
-          echo "## Test Results" >> $GITHUB_STEP_SUMMARY
-          echo "Pytest suite complete — see coverage.xml for full report" >> $GITHUB_STEP_SUMMARY
+          name: test-results
+          path: "*.xml"
