@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import PatientLayout from "../../components/PatientLayout";
 import PageWrapper from "../../components/shared/PageWrapper";
 import { SkeletonTable } from "../../components/shared/SkeletonCard";
+import EmptyState from "../../components/shared/EmptyState";
 import { showError } from "../../components/shared/Toast";
 import { explainLab, getMyFHIR } from "../../api/api";
 import {
@@ -49,7 +50,7 @@ function LabRow({ obs, i }) {
     <motion.div
       initial={{ opacity: 0, x: -8 }}
       animate={{ opacity: 1, x: 0 }}
-      transition={{ delay: i * 0.05 }}
+      transition={{ delay: Math.min(i, 8) * 0.05 }}
       className="px-5 py-4 border-b border-slate-50 last:border-b-0"
     >
       <div className="flex items-center justify-between">
@@ -181,11 +182,11 @@ export default function History() {
                 key={tab.key}
                 initial={{ opacity: 0, y: 12 }}
                 animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: i * 0.07 }}
+                transition={{ delay: Math.min(i, 8) * 0.05 }}
                 onClick={() => setActiveTab(tab.key)}
-                className="p-4 rounded-2xl text-left transition-all relative overflow-hidden"
+                className={`p-4 rounded-2xl text-left transition-all relative overflow-hidden ${active ? "" : "bg-white"}`}
                 style={{
-                  background: active ? cm.bg : "white",
+                  background: active ? cm.bg : undefined,
                   border:     `1px solid ${active ? cm.border : "rgba(226,232,240,1)"}`,
                   boxShadow:  active ? `0 4px 20px ${cm.bg}` : "0 1px 4px rgba(0,0,0,0.04)"
                 }}
@@ -244,10 +245,10 @@ export default function History() {
                   <tab.icon size={15} />
                   {tab.label}
                   <span
-                    className="text-xs px-1.5 py-0.5 rounded-full font-semibold"
+                    className={`text-xs px-1.5 py-0.5 rounded-full font-semibold ${active ? "" : "bg-slate-100"}`}
                     style={active
                       ? { background: cm.bg, color: cm.text }
-                      : { background: "#f1f5f9", color: "#94a3b8" }
+                      : { color: "#94a3b8" }
                     }
                   >
                     {count}
@@ -267,17 +268,12 @@ export default function History() {
               transition={{ duration: 0.18 }}
             >
               {activeData.length === 0 ? (
-                <div className="py-16 text-center">
-                  <div className={`w-14 h-14 ${c.iconBg} rounded-2xl flex items-center justify-center mx-auto mb-4`}>
-                    {activeTab_?.icon && <activeTab_.icon size={24} className={c.icon} />}
-                  </div>
-                  <p className="text-slate-600 text-sm font-semibold">
-                    No {activeTab_?.label.toLowerCase()} on record
-                  </p>
-                  <p className="text-slate-400 text-xs mt-1.5 max-w-xs mx-auto">
-                    Your doctor will update these after your next visit
-                  </p>
-                </div>
+                <EmptyState
+                  icon={activeTab_?.icon}
+                  title={`No ${activeTab_?.label.toLowerCase()} on record`}
+                  message="Your doctor will update these after your next visit"
+                  className="py-16"
+                />
               ) : (
 
                 // ── Conditions — timeline ──
@@ -288,7 +284,7 @@ export default function History() {
                         key={i}
                         initial={{ opacity: 0, x: -10 }}
                         animate={{ opacity: 1, x: 0 }}
-                        transition={{ delay: i * 0.06 }}
+                        transition={{ delay: Math.min(i, 8) * 0.05 }}
                         className="flex gap-4 pb-5 last:pb-0"
                       >
                         <div className="flex flex-col items-center pt-1">
@@ -326,7 +322,7 @@ export default function History() {
                         key={i}
                         initial={{ opacity: 0, x: -8 }}
                         animate={{ opacity: 1, x: 0 }}
-                        transition={{ delay: i * 0.06 }}
+                        transition={{ delay: Math.min(i, 8) * 0.05 }}
                         className="flex items-center gap-4 px-5 py-4"
                       >
                         <div className="w-10 h-10 bg-green-50 rounded-xl flex items-center justify-center flex-shrink-0">
@@ -367,7 +363,7 @@ export default function History() {
                         key={i}
                         initial={{ opacity: 0, x: -8 }}
                         animate={{ opacity: 1, x: 0 }}
-                        transition={{ delay: i * 0.06 }}
+                        transition={{ delay: Math.min(i, 8) * 0.05 }}
                         className="flex items-center gap-4 px-5 py-4"
                       >
                         <div className="w-10 h-10 bg-red-50 rounded-xl flex items-center justify-center flex-shrink-0">

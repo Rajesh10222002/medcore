@@ -1,5 +1,6 @@
 from flask import Blueprint, request, jsonify
 from db import get_db
+from middleware.auth import token_required
 import bcrypt
 import jwt
 import os
@@ -204,6 +205,50 @@ def login():
         }), 200
 
     except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    finally:
+        cur.close()
+        conn.close()
+
+
+# ─────────────────────────────────────────────
+# CHANGE PASSWORD — any authenticated role
+# PUT /api/auth/change-password
+# ─────────────────────────────────────────────
+@auth_bp.route("/auth/change-password", methods=["PUT"])
+@token_required
+def change_password():
+    data             = request.json
+    current_password = data.get("current_password", "")
+    new_password     = data.get("new_password", "")
+
+    if not current_password or not new_password:
+        return jsonify({"error": "Current and new password are required"}), 400
+    if len(new_password) < 8:
+        return jsonify({"error": "New password must be at least 8 characters"}), 400
+
+    user_id = request.user.get("user_id")
+    conn = get_db()
+    cur  = conn.cursor()
+    try:
+        cur.execute("SELECT password_hash FROM users WHERE user_id = %s", (user_id,))
+        row = cur.fetchone()
+        if not row:
+            return jsonify({"error": "User not found"}), 404
+
+        if not bcrypt.checkpw(current_password.encode(), row[0].encode()):
+            return jsonify({"error": "Current password is incorrect"}), 401
+
+        new_hash = bcrypt.hashpw(new_password.encode(), bcrypt.gensalt()).decode()
+        cur.execute(
+            "UPDATE users SET password_hash = %s WHERE user_id = %s",
+            (new_hash, user_id)
+        )
+        conn.commit()
+        return jsonify({"message": "Password updated successfully"}), 200
+
+    except Exception as e:
+        conn.rollback()
         return jsonify({"error": str(e)}), 500
     finally:
         cur.close()

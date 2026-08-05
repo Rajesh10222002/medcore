@@ -1,93 +1,80 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import AdminLayout from "../../components/AdminLayout";
 import PageWrapper from "../../components/shared/PageWrapper";
-import { SkeletonCard } from "../../components/shared/SkeletonCard";
+import { SkeletonCard, SkeletonTable } from "../../components/shared/SkeletonCard";
+import EmptyState from "../../components/shared/EmptyState";
+import Pagination from "../../components/shared/Pagination";
+import AnimatedNumber from "../../components/shared/AnimatedNumber";
+import { showError } from "../../components/shared/Toast";
 import { getAdminPatients } from "../../api/api";
 import {
   Users, Search, Calendar,
   Mail, Phone, TrendingUp,
-  UserCheck, X, Heart
+  UserCheck, X, Heart, ChevronRight
 } from "lucide-react";
 
-// Animated counter
-function AnimatedNumber({ value }) {
-  const [display, setDisplay] = useState(0);
-  useEffect(() => {
-    let start = 0;
-    const end  = parseInt(value) || 0;
-    if (start === end) return;
-    const step  = Math.max(1, Math.floor(end / 20));
-    const timer = setInterval(() => {
-      start = Math.min(start + step, end);
-      setDisplay(start);
-      if (start >= end) clearInterval(timer);
-    }, 50);
-    return () => clearInterval(timer);
-  }, [value]);
-  return <span>{display}</span>;
-}
+const PER_PAGE = 20;
 
 export default function AdminPatients() {
+  const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
+
   const [patients, setPatients] = useState([]);
-  const [filtered, setFiltered] = useState([]);
+  const [total,    setTotal]    = useState(0);
+  const [stats,    setStats]    = useState(null);
   const [loading,  setLoading]  = useState(true);
-  const [search,   setSearch]   = useState("");
-  const [genderFilter, setGenderFilter] = useState("all");
+  const [search,       setSearch]       = useState(searchParams.get("search") || "");
+  const [genderFilter, setGenderFilter] = useState(searchParams.get("gender") || "all");
+  const [page,         setPage]         = useState(parseInt(searchParams.get("page")) || 1);
 
+  const skipReset = useRef(true);
+
+  // Reset to page 1 whenever filters change (but not on initial mount,
+  // so a shared URL like ?search=foo&page=3 still lands on page 3).
   useEffect(() => {
-    getAdminPatients()
-      .then(res => { setPatients(res.data); setFiltered(res.data); })
-      .catch(err => console.error(err))
-      .finally(() => setLoading(false));
-  }, []);
+    if (skipReset.current) { skipReset.current = false; return; }
+    setPage(1);
+  }, [search, genderFilter]);
 
+  // Keep the URL in sync with current filters/page
   useEffect(() => {
-    let result = patients;
-    if (genderFilter !== "all") {
-      result = result.filter(p => p.gender?.toLowerCase() === genderFilter);
-    }
-    if (search.trim()) {
-      const q = search.toLowerCase();
-      result = result.filter(p =>
-        `${p.first_name} ${p.last_name}`.toLowerCase().includes(q) ||
-        p.email?.toLowerCase().includes(q) ||
-        p.phone?.includes(q)
-      );
-    }
-    setFiltered(result);
-  }, [search, genderFilter, patients]);
+    const params = {};
+    if (search) params.search = search;
+    if (genderFilter !== "all") params.gender = genderFilter;
+    if (page > 1) params.page = String(page);
+    setSearchParams(params, { replace: true });
+  }, [search, genderFilter, page]);
 
-  if (loading) return (
+  // Fetch (debounced so typing doesn't fire a request per keystroke)
+  useEffect(() => {
+    setLoading(true);
+    const t = setTimeout(() => {
+      getAdminPatients({ page, per_page: PER_PAGE, search, gender: genderFilter })
+        .then(res => {
+          setPatients(res.data.items);
+          setTotal(res.data.total);
+          setStats(res.data.stats);
+        })
+        .catch(() => showError("Failed to load patients"))
+        .finally(() => setLoading(false));
+    }, 300);
+    return () => clearTimeout(t);
+  }, [page, search, genderFilter]);
+
+  if (loading && patients.length === 0) return (
     <AdminLayout>
       <div className="mb-6">
         <div className="h-7 w-48 bg-slate-200 rounded-lg animate-pulse mb-2" />
         <div className="h-4 w-32 bg-slate-100 rounded-lg animate-pulse" />
       </div>
-      <div className="grid grid-cols-3 gap-4 mb-6">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
         {[...Array(3)].map((_, i) => <SkeletonCard key={i} />)}
       </div>
-      <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-6">
-        {[...Array(5)].map((_, i) => (
-          <div key={i} className="flex items-center gap-4 py-3 border-b border-slate-50 last:border-0">
-            <div className="w-10 h-10 bg-slate-100 rounded-full animate-pulse flex-shrink-0" />
-            <div className="flex-1 space-y-2">
-              <div className="h-3 bg-slate-100 rounded w-40 animate-pulse" />
-              <div className="h-3 bg-slate-50 rounded w-64 animate-pulse" />
-            </div>
-          </div>
-        ))}
-      </div>
+      <SkeletonTable rows={5} />
     </AdminLayout>
   );
-
-  const maleCount    = patients.filter(p => p.gender?.toLowerCase() === "male").length;
-  const femaleCount  = patients.filter(p => p.gender?.toLowerCase() === "female").length;
-  const thisMonth    = patients.filter(p => {
-    const d = new Date(p.created_at);
-    const n = new Date();
-    return d.getMonth() === n.getMonth() && d.getFullYear() === n.getFullYear();
-  }).length;
 
   return (
     <AdminLayout>
@@ -98,31 +85,31 @@ export default function AdminPatients() {
           <div>
             <h1 className="text-2xl font-bold text-slate-800">All Patients</h1>
             <p className="text-slate-500 text-sm mt-1">
-              Complete patient registry — {patients.length} registered
+              Complete patient registry — {stats?.total ?? 0} registered
             </p>
           </div>
         </div>
 
         {/* Stat cards */}
-        <div className="grid grid-cols-4 gap-4 mb-6">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
           {[
             {
-              icon: Users, label: "Total Patients", value: patients.length,
+              icon: Users, label: "Total Patients", value: stats?.total,
               gradient: "linear-gradient(135deg, #f5f3ff, #ede9fe)",
               iconBg: "rgba(124,58,237,0.12)", iconColor: "text-violet-600", delay: 0.05
             },
             {
-              icon: TrendingUp, label: "New This Month", value: thisMonth,
+              icon: TrendingUp, label: "New This Month", value: stats?.new_this_month,
               gradient: "linear-gradient(135deg, #fffbeb, #fef3c7)",
               iconBg: "rgba(245,158,11,0.12)", iconColor: "text-amber-500", delay: 0.1
             },
             {
-              icon: UserCheck, label: "Male Patients", value: maleCount,
+              icon: UserCheck, label: "Male Patients", value: stats?.male,
               gradient: "linear-gradient(135deg, #eff6ff, #dbeafe)",
               iconBg: "rgba(59,130,246,0.12)", iconColor: "text-blue-600", delay: 0.15
             },
             {
-              icon: Heart, label: "Female Patients", value: femaleCount,
+              icon: Heart, label: "Female Patients", value: stats?.female,
               gradient: "linear-gradient(135deg, #fdf2f8, #fce7f3)",
               iconBg: "rgba(236,72,153,0.12)", iconColor: "text-pink-500", delay: 0.2
             },
@@ -132,7 +119,7 @@ export default function AdminPatients() {
               initial={{ opacity: 0, y: 16 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay }}
-              className="relative rounded-2xl p-5 overflow-hidden"
+              className="relative rounded-2xl p-5 overflow-hidden stat-gradient-card"
               style={{ background: gradient, boxShadow: "0 2px 12px rgba(0,0,0,0.05)" }}
             >
               <div className="absolute top-0 right-0 w-16 h-16 rounded-full blur-2xl opacity-30"
@@ -145,14 +132,14 @@ export default function AdminPatients() {
                 </div>
               </div>
               <p className="relative text-3xl font-bold text-slate-800">
-                <AnimatedNumber value={value} />
+                <AnimatedNumber value={value || 0} />
               </p>
             </motion.div>
           ))}
         </div>
 
         {/* Search + filter bar */}
-        <div className="flex items-center gap-3 mb-5">
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 mb-5">
           <div className="relative flex-1">
             <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={15} />
             <input
@@ -177,10 +164,10 @@ export default function AdminPatients() {
               <button
                 key={g}
                 onClick={() => setGenderFilter(g)}
-                className="px-3 py-2 rounded-xl text-xs font-semibold capitalize transition-all"
+                className={`px-3 py-2 rounded-xl text-xs font-semibold capitalize transition-all ${genderFilter === g ? "" : "bg-white"}`}
                 style={genderFilter === g
                   ? { background: "rgba(124,58,237,0.12)", color: "#7c3aed", border: "1px solid rgba(124,58,237,0.25)" }
-                  : { background: "white", color: "#94a3b8", border: "1px solid #e2e8f0" }
+                  : { color: "#94a3b8", border: "1px solid #e2e8f0" }
                 }
               >
                 {g === "all" ? "All" : g.charAt(0).toUpperCase() + g.slice(1)}
@@ -194,7 +181,7 @@ export default function AdminPatients() {
           <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between">
             <div>
               <h3 className="font-bold text-slate-800">Patient Registry</h3>
-              <p className="text-slate-400 text-xs mt-0.5">{filtered.length} shown</p>
+              <p className="text-slate-400 text-xs mt-0.5">{total} matching</p>
             </div>
             {(search || genderFilter !== "all") && (
               <button
@@ -206,25 +193,27 @@ export default function AdminPatients() {
             )}
           </div>
 
-          {filtered.length === 0 ? (
-            <div className="py-16 text-center">
-              <div className="w-14 h-14 mx-auto mb-4 rounded-2xl flex items-center justify-center"
-                style={{ background: "rgba(124,58,237,0.05)", border: "1px dashed rgba(124,58,237,0.2)" }}>
-                <Users size={24} className="text-slate-300" />
-              </div>
-              <p className="text-slate-500 text-sm font-medium">No patients found</p>
-              <p className="text-slate-400 text-xs mt-1">Try adjusting your search or filter</p>
-            </div>
+          {patients.length === 0 ? (
+            <EmptyState
+              variant="dashed"
+              icon={Users}
+              title="No patients found"
+              message="Try adjusting your search or filter"
+              className="py-16"
+            />
           ) : (
             <div className="divide-y divide-slate-50">
               <AnimatePresence>
-                {filtered.map((p, i) => (
+                {patients.map((p, i) => (
                   <motion.div
                     key={p.patient_id}
                     initial={{ opacity: 0, x: -8 }}
                     animate={{ opacity: 1, x: 0 }}
-                    transition={{ delay: i * 0.03 }}
-                    className="flex items-center gap-4 px-5 py-4 hover:bg-slate-50/70 transition-colors"
+                    transition={{ delay: Math.min(i, 10) * 0.04 }}
+                    onClick={() => navigate(`/admin/patients/${p.patient_id}`)}
+                    whileHover={{ y: -2 }}
+                    whileTap={{ scale: 0.98 }}
+                    className="flex items-center gap-4 px-5 py-4 hover:bg-slate-50/70 cursor-pointer transition-colors"
                   >
                     {/* Avatar */}
                     <div className="w-11 h-11 rounded-2xl flex items-center justify-center flex-shrink-0 text-white text-sm font-bold shadow-sm"
@@ -288,11 +277,15 @@ export default function AdminPatients() {
                         </span>
                       </div>
                     </div>
+
+                    <ChevronRight size={16} className="text-slate-300 flex-shrink-0" />
                   </motion.div>
                 ))}
               </AnimatePresence>
             </div>
           )}
+
+          <Pagination page={page} perPage={PER_PAGE} total={total} onChange={setPage} />
         </div>
 
       </PageWrapper>

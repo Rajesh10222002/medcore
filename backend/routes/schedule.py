@@ -137,7 +137,8 @@ def get_day_detail(date_str):
     try:
         cur.execute("""
             SELECT a.appointment_id, a.appointment_date, a.status,
-                   a.reason, p.first_name || ' ' || p.last_name AS patient_name,
+                   a.reason, a.patient_id,
+                   p.first_name || ' ' || p.last_name AS patient_name,
                    p.phone, p.age_years
             FROM appointments a
             JOIN (
@@ -156,9 +157,10 @@ def get_day_detail(date_str):
             "appointment_date": str(r[1]),
             "status":           r[2],
             "reason":           r[3],
-            "patient_name":     r[4],
-            "phone":            r[5],
-            "age":              r[6]
+            "patient_id":       r[4],
+            "patient_name":     r[5],
+            "phone":            r[6],
+            "age":              r[7]
         } for r in rows]
 
         # Also get blocks for this day

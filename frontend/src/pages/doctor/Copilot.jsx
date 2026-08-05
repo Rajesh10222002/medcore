@@ -1,8 +1,10 @@
 import { useState, useEffect } from "react";
 import DoctorLayout from "../../components/DoctorLayout";
+import PageWrapper from "../../components/shared/PageWrapper";
+import { showError } from "../../components/shared/Toast";
 import { getCopilot, getDoctorPatients } from "../../api/api";
 import {
-  Brain, Loader2, AlertCircle,
+  Brain, Loader2,
   Stethoscope, Sparkles,
   Activity, AlertTriangle, Search
 } from "lucide-react";
@@ -137,11 +139,10 @@ export default function Copilot() {
   const [symptoms,  setSymptoms]  = useState("");
   const [response,  setResponse]  = useState("");
   const [loading,   setLoading]   = useState(false);
-  const [error,     setError]     = useState("");
 
   useEffect(() => {
-    getDoctorPatients()
-      .then(res => setPatients(res.data))
+    getDoctorPatients({ per_page: 500 })
+      .then(res => setPatients(res.data.items))
       .catch(() => {});
   }, []);
 
@@ -149,13 +150,12 @@ export default function Copilot() {
     e.preventDefault();
     if (!symptoms.trim()) return;
     setLoading(true);
-    setError("");
     setResponse("");
     try {
       const res = await getCopilot({ symptoms, patient_id: patientId || null });
       setResponse(res.data.reply);
     } catch {
-      setError("AI Copilot is temporarily unavailable. Please try again.");
+      showError("AI Copilot is temporarily unavailable. Please try again.");
     } finally {
       setLoading(false);
     }
@@ -163,6 +163,7 @@ export default function Copilot() {
 
   return (
     <DoctorLayout>
+      <PageWrapper>
 
       <div className="mb-6">
         <h1 className="text-2xl font-bold text-slate-800">AI Copilot</h1>
@@ -258,7 +259,7 @@ export default function Copilot() {
             style={{ minHeight: "520px" }}>
 
             {/* Panel header */}
-            <div className="flex items-center gap-3 px-5 py-4 border-b border-slate-100"
+            <div className="flex items-center gap-3 px-5 py-4 border-b border-slate-100 stat-gradient-card"
               style={{ background: "linear-gradient(135deg, #f0fdf4, #dcfce7)" }}>
               <div className="w-9 h-9 rounded-xl flex items-center justify-center"
                 style={{ background: "linear-gradient(135deg, #059669, #047857)" }}>
@@ -278,15 +279,8 @@ export default function Copilot() {
             </div>
 
             <div className="p-6">
-              {/* Error */}
-              {error && (
-                <div className="flex items-center gap-2 bg-red-50 border border-red-100 text-red-600 px-4 py-3 rounded-xl text-sm mb-4">
-                  <AlertCircle size={15} className="flex-shrink-0" /> {error}
-                </div>
-              )}
-
               {/* Empty state */}
-              {!response && !loading && !error && (
+              {!response && !loading && (
                 <div className="flex flex-col items-center justify-center py-16 text-center">
                   <div className="w-16 h-16 rounded-2xl flex items-center justify-center mb-4"
                     style={{ background: "rgba(5,150,105,0.06)", border: "1px dashed rgba(5,150,105,0.2)" }}>
@@ -368,6 +362,7 @@ export default function Copilot() {
           </div>
         </div>
       </div>
+      </PageWrapper>
     </DoctorLayout>
   );
 }

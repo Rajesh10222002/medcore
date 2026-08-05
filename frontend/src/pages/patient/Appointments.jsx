@@ -1,16 +1,22 @@
 import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
+import { useAuth } from "../../context/AuthContext";
 import PatientLayout from "../../components/PatientLayout";
+import PageWrapper from "../../components/shared/PageWrapper";
+import { SkeletonTable } from "../../components/shared/SkeletonCard";
+import EmptyState from "../../components/shared/EmptyState";
+import { showSuccess, showError } from "../../components/shared/Toast";
 import {
   getMyAppointments, getDoctors,
   bookAppointment, getAvailableSlots,
-  cancelAppointment
+  cancelAppointment, suggestSpecialty
 } from "../../api/api";
 import {
   Calendar, Clock, Plus, X, CheckCircle,
   AlertCircle, Loader2, Stethoscope,
   ChevronLeft, ChevronRight,
-  CalendarOff, Heart
+  CalendarOff, Heart, Search, Users,
+  Sparkles, Star, RotateCcw
 } from "lucide-react";
 
 // ── Status badge ──────────────────────────
@@ -22,7 +28,8 @@ function StatusBadge({ status }) {
   };
   const s = map[status] || map.scheduled;
   return (
-    <span className="px-2.5 py-0.5 rounded-full text-xs font-semibold capitalize"
+    <span className="status-badge px-2.5 py-0.5 rounded-full text-xs font-semibold capitalize"
+      data-status={status}
       style={{ background: s.bg, color: s.color, border: `1px solid ${s.border}` }}>
       {status}
     </span>
@@ -61,6 +68,45 @@ function StepDot({ n, current, label }) {
   );
 }
 
+// ── Doctor card (booking step 1) ──────────
+function DoctorCard({ d, onSelect, index = 0, isFavorite, onToggleFavorite }) {
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 10 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ delay: Math.min(index, 10) * 0.04 }}
+      whileHover={{ y: -2 }}
+      whileTap={{ scale: 0.98 }}
+      onClick={onSelect}
+      className="w-full flex items-center gap-3 p-4 border border-slate-200 rounded-2xl hover:border-sky-300 hover:bg-sky-50/40 transition-all text-left group cursor-pointer"
+    >
+      <div className="w-12 h-12 rounded-2xl flex items-center justify-center flex-shrink-0 text-white text-sm font-bold shadow-md"
+        style={{ background: "linear-gradient(135deg, #2176AE, #1A4A7A)" }}>
+        {d.first_name[0]}{d.last_name[0]}
+      </div>
+      <div className="flex-1 min-w-0">
+        <p className="text-slate-800 text-sm font-bold">Dr. {d.first_name} {d.last_name}</p>
+        <p className="text-slate-400 text-xs mt-0.5">{d.specialization}</p>
+        <p className="text-slate-300 text-[11px] mt-0.5">
+          {d.patients_treated > 0 ? `${d.patients_treated} patient${d.patients_treated !== 1 ? "s" : ""} treated` : "New to MedCore"}
+        </p>
+      </div>
+      {onToggleFavorite && (
+        <button
+          onClick={(e) => { e.stopPropagation(); onToggleFavorite(d.doctor_id); }}
+          aria-label={isFavorite ? "Remove from favorites" : "Add to favorites"}
+          className="w-8 h-8 flex items-center justify-center rounded-xl hover:bg-amber-50 transition-colors flex-shrink-0"
+        >
+          <Star size={15} className={isFavorite ? "text-amber-400 fill-amber-400" : "text-slate-300"} />
+        </button>
+      )}
+      <div className="w-8 h-8 rounded-xl flex items-center justify-center bg-slate-100 group-hover:bg-sky-100 transition-colors flex-shrink-0">
+        <ChevronRight size={14} className="text-slate-400 group-hover:text-sky-500" />
+      </div>
+    </motion.div>
+  );
+}
+
 // ── Countdown timer ───────────────────────
 function Countdown({ appointmentDate }) {
   const [label, setLabel] = useState("");
@@ -82,13 +128,14 @@ function Countdown({ appointmentDate }) {
 
 // ─────────────────────────────────────────
 export default function Appointments() {
+  const { user } = useAuth();
   const [appointments, setAppointments] = useState([]);
   const [doctors,      setDoctors]      = useState([]);
   const [loading,      setLoading]      = useState(true);
   const [showForm,     setShowForm]     = useState(false);
   const [booking,      setBooking]      = useState(false);
-  const [success,      setSuccess]      = useState("");
-  const [error,        setError]        = useState("");
+  const [bookError,    setBookError]    = useState("");
+  const [justBooked,   setJustBooked]   = useState(false);
   const [step,         setStep]         = useState(1);
   const [selectedDoc,  setSelectedDoc]  = useState(null);
   const [selectedDate, setSelectedDate] = useState(null);
@@ -100,6 +147,28 @@ export default function Appointments() {
   const [cancelId,     setCancelId]     = useState(null);
   const [cancelling,   setCancelling]   = useState(false);
   const [activeTab,    setActiveTab]    = useState("upcoming");
+  const [doctorSearch,    setDoctorSearch]    = useState("");
+  const [specialtyFilter, setSpecialtyFilter] = useState("all");
+
+  // ── Symptom → specialty AI assistant ──
+  const [showSymptomBox, setShowSymptomBox] = useState(false);
+  const [symptoms,       setSymptoms]       = useState("");
+  const [suggesting,     setSuggesting]     = useState(false);
+  const [suggestion,     setSuggestion]     = useState(null);
+
+  // ── Favorite doctors (local, per logged-in patient) ──
+  const favKey = `medcore_fav_doctors_${user?.name || "guest"}`;
+  const [favorites, setFavorites] = useState(() => {
+    try { return JSON.parse(localStorage.getItem(favKey) || "[]"); }
+    catch { return []; }
+  });
+  const toggleFavorite = (doctorId) => {
+    setFavorites(prev => {
+      const next = prev.includes(doctorId) ? prev.filter(id => id !== doctorId) : [...prev, doctorId];
+      localStorage.setItem(favKey, JSON.stringify(next));
+      return next;
+    });
+  };
 
   const days = getNext14Days();
   const DAY  = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
@@ -113,7 +182,7 @@ export default function Appointments() {
       setAppointments(aRes.data);
       setDoctors(dRes.data);
     } catch {
-      setError("Failed to load data");
+      showError("Failed to load appointments");
     } finally {
       setLoading(false);
     }
@@ -134,7 +203,7 @@ export default function Appointments() {
         setSlots(res.data.slots || []);
       }
     } catch {
-      setError("Failed to load slots");
+      showError("Failed to load available slots");
     } finally {
       setLoadingSlots(false);
     }
@@ -143,21 +212,24 @@ export default function Appointments() {
   const handleBook = async () => {
     if (!selectedDoc || !selectedSlot || !reason.trim()) return;
     setBooking(true);
-    setError("");
+    setBookError("");
     try {
       await bookAppointment({
         doctor_id:        selectedDoc.doctor_id,
         appointment_date: selectedSlot.datetime,
         reason
       });
-      setSuccess(`Booked with Dr. ${selectedDoc.last_name} on ${
+      showSuccess(`Booked with Dr. ${selectedDoc.last_name} on ${
         selectedDate.toLocaleDateString("en-IN", { day: "numeric", month: "long" })
       } at ${selectedSlot.label}`);
-      setShowForm(false);
-      resetForm();
+      setJustBooked(true);
       loadData();
+      setTimeout(() => {
+        setShowForm(false);
+        resetForm();
+      }, 1400);
     } catch (err) {
-      setError(err.response?.data?.error || "Booking failed. Please try again.");
+      setBookError(err.response?.data?.error || "Booking failed. Please try again.");
     } finally {
       setBooking(false);
     }
@@ -166,18 +238,44 @@ export default function Appointments() {
   const resetForm = () => {
     setStep(1); setSelectedDoc(null); setSelectedDate(null);
     setSelectedSlot(null); setReason(""); setSlots([]);
-    setLeaveBlocked(false); setError("");
+    setLeaveBlocked(false); setBookError(""); setJustBooked(false);
+    setDoctorSearch(""); setSpecialtyFilter("all");
+    setShowSymptomBox(false); setSymptoms(""); setSuggestion(null);
+  };
+
+  const handleSuggestSpecialty = async () => {
+    if (!symptoms.trim()) return;
+    setSuggesting(true);
+    setSuggestion(null);
+    try {
+      const res = await suggestSpecialty({ symptoms });
+      setSuggestion(res.data);
+      if (res.data.specialty) setSpecialtyFilter(res.data.specialty);
+    } catch {
+      showError("Couldn't get a suggestion right now — please browse below");
+    } finally {
+      setSuggesting(false);
+    }
+  };
+
+  const handleBookAgain = (appt) => {
+    const doc = doctors.find(d => d.doctor_id === appt.doctor_id);
+    if (!doc) { showError("This doctor is no longer available"); return; }
+    resetForm();
+    setSelectedDoc(doc);
+    setStep(2);
+    setShowForm(true);
   };
 
   const confirmCancel = async () => {
     setCancelling(true);
     try {
       await cancelAppointment(cancelId);
-      setSuccess("Appointment cancelled successfully.");
+      showSuccess("Appointment cancelled successfully.");
       setCancelId(null);
       loadData();
     } catch {
-      setError("Failed to cancel appointment");
+      showError("Failed to cancel appointment");
     } finally {
       setCancelling(false);
     }
@@ -188,16 +286,51 @@ export default function Appointments() {
   const past     = appointments.filter(a => a.status !== "scheduled" || new Date(a.appointment_date) <= now);
   const nextAppt = upcoming[0];
 
+  // ── Doctor directory: search + specialty grouping ──
+  const specialties = [...new Set(doctors.map(d => d.specialization).filter(Boolean))].sort();
+
+  const byFavoriteFirst = (a, b) => {
+    const aFav = favorites.includes(a.doctor_id), bFav = favorites.includes(b.doctor_id);
+    return aFav === bFav ? 0 : aFav ? -1 : 1;
+  };
+
+  const filteredDoctors = doctors.filter(d => {
+    const matchesSpecialty = specialtyFilter === "all" || d.specialization === specialtyFilter;
+    const q = doctorSearch.trim().toLowerCase();
+    const matchesSearch = !q
+      || `${d.first_name} ${d.last_name}`.toLowerCase().includes(q)
+      || (d.specialization || "").toLowerCase().includes(q);
+    return matchesSpecialty && matchesSearch;
+  }).sort(byFavoriteFirst);
+
+  // Group by specialty only in the resting state (no active search/filter) —
+  // once the patient is searching or has picked a specialty, a flat list is clearer.
+  const isBrowsing = specialtyFilter === "all" && !doctorSearch.trim();
+  const groupedDoctors = isBrowsing
+    ? filteredDoctors.reduce((acc, d) => {
+        const key = d.specialization || "Other";
+        (acc[key] = acc[key] || []).push(d);
+        acc[key].sort(byFavoriteFirst);
+        return acc;
+      }, {})
+    : null;
+  const groupedEntries = groupedDoctors
+    ? Object.entries(groupedDoctors).sort(([a], [b]) => a.localeCompare(b))
+    : null;
+
   if (loading) return (
     <PatientLayout>
-      <div className="flex items-center justify-center h-64">
-        <Loader2 className="animate-spin text-sky-500" size={32} />
+      <div className="mb-6">
+        <div className="h-7 w-48 bg-slate-200 rounded-lg animate-pulse mb-2" />
+        <div className="h-4 w-64 bg-slate-100 rounded-lg animate-pulse" />
       </div>
+      <SkeletonTable rows={4} />
     </PatientLayout>
   );
 
   return (
     <PatientLayout>
+      <PageWrapper>
 
       {/* ── Page header ── */}
       <div className="flex items-center justify-between mb-6">
@@ -217,28 +350,6 @@ export default function Appointments() {
           <Plus size={16} /> Book Appointment
         </button>
       </div>
-
-      {/* ── Alerts ── */}
-      <AnimatePresence>
-        {success && (
-          <motion.div initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
-            className="flex items-center gap-3 px-4 py-3 rounded-2xl text-sm mb-5 border"
-            style={{ background: "rgba(16,185,129,0.06)", borderColor: "rgba(16,185,129,0.2)", color: "#059669" }}>
-            <CheckCircle size={16} className="flex-shrink-0" />
-            <span className="font-medium">{success}</span>
-            <button onClick={() => setSuccess("")} className="ml-auto"><X size={14} /></button>
-          </motion.div>
-        )}
-        {error && !showForm && (
-          <motion.div initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
-            className="flex items-center gap-3 px-4 py-3 rounded-2xl text-sm mb-5 border"
-            style={{ background: "rgba(239,68,68,0.06)", borderColor: "rgba(239,68,68,0.2)", color: "#dc2626" }}>
-            <AlertCircle size={16} className="flex-shrink-0" />
-            <span>{error}</span>
-            <button onClick={() => setError("")} className="ml-auto"><X size={14} /></button>
-          </motion.div>
-        )}
-      </AnimatePresence>
 
       {/* ── Next appointment hero card ── */}
       {nextAppt && (
@@ -323,7 +434,8 @@ export default function Appointments() {
               }}
             >
               {tab.label}
-              <span className="px-2 py-0.5 rounded-full text-xs font-bold"
+              <span className="tab-count-pill px-2 py-0.5 rounded-full text-xs font-bold"
+                data-active={activeTab === tab.key}
                 style={activeTab === tab.key
                   ? { background: "rgba(33,118,174,0.1)", color: "#2176AE" }
                   : { background: "#f1f5f9", color: "#94a3b8" }
@@ -349,21 +461,22 @@ export default function Appointments() {
           {activeTab === "upcoming" && (
             <motion.div key="upcoming" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
               {upcoming.length === 0 ? (
-                <div className="py-16 text-center">
-                  <div className="w-16 h-16 mx-auto mb-4 rounded-2xl flex items-center justify-center"
-                    style={{ background: "rgba(33,118,174,0.05)", border: "1px dashed rgba(33,118,174,0.2)" }}>
-                    <Calendar size={26} className="text-slate-300" />
-                  </div>
-                  <p className="text-slate-500 text-sm font-semibold">No upcoming appointments</p>
-                  <p className="text-slate-400 text-xs mt-1 mb-5">Book one to see your doctor</p>
-                  <button
-                    onClick={() => { setShowForm(true); resetForm(); }}
-                    className="inline-flex items-center gap-2 px-5 py-2.5 text-white text-sm font-bold rounded-2xl shadow-lg"
-                    style={{ background: "linear-gradient(135deg, #2176AE, #1A4A7A)" }}
-                  >
-                    <Plus size={15} /> Book Now
-                  </button>
-                </div>
+                <EmptyState
+                  variant="dashed"
+                  icon={Calendar}
+                  title="No upcoming appointments"
+                  message="Book one to see your doctor"
+                  className="py-16"
+                  action={
+                    <button
+                      onClick={() => { setShowForm(true); resetForm(); }}
+                      className="inline-flex items-center gap-2 px-5 py-2.5 text-white text-sm font-bold rounded-2xl shadow-lg"
+                      style={{ background: "linear-gradient(135deg, #2176AE, #1A4A7A)" }}
+                    >
+                      <Plus size={15} /> Book Now
+                    </button>
+                  }
+                />
               ) : (
                 <div className="divide-y divide-slate-50">
                   {upcoming.map((appt, i) => (
@@ -371,7 +484,7 @@ export default function Appointments() {
                       key={appt.appointment_id}
                       initial={{ opacity: 0, x: -8 }}
                       animate={{ opacity: 1, x: 0 }}
-                      transition={{ delay: i * 0.05 }}
+                      transition={{ delay: Math.min(i, 10) * 0.04 }}
                       className="flex items-center gap-4 px-5 py-4 hover:bg-slate-50/70 transition-colors"
                     >
                       {/* Date badge */}
@@ -424,10 +537,11 @@ export default function Appointments() {
           {activeTab === "past" && (
             <motion.div key="past" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
               {past.length === 0 ? (
-                <div className="py-16 text-center">
-                  <Stethoscope size={28} className="text-slate-200 mx-auto mb-3" />
-                  <p className="text-slate-400 text-sm">No past visits yet</p>
-                </div>
+                <EmptyState
+                  icon={Stethoscope}
+                  title="No past visits yet"
+                  className="py-16"
+                />
               ) : (
                 <div className="divide-y divide-slate-50">
                   {past.map((appt, i) => (
@@ -439,11 +553,18 @@ export default function Appointments() {
                         <p className="text-slate-600 text-sm font-semibold">Dr. {appt.doctor_name}</p>
                         <p className="text-slate-400 text-xs mt-0.5 truncate">{appt.specialization} · "{appt.reason}"</p>
                       </div>
-                      <div className="text-right flex-shrink-0 space-y-1">
+                      <div className="text-right flex-shrink-0 space-y-1.5">
                         <p className="text-slate-400 text-xs">
                           {new Date(appt.appointment_date).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })}
                         </p>
                         <StatusBadge status={appt.status} />
+                        <button
+                          onClick={() => handleBookAgain(appt)}
+                          className="flex items-center gap-1 text-[11px] font-semibold hover:underline ml-auto"
+                          style={{ color: "#2176AE" }}
+                        >
+                          <RotateCcw size={10} /> Book again
+                        </button>
                       </div>
                     </div>
                   ))}
@@ -489,8 +610,15 @@ export default function Appointments() {
                     <div key={n} className="flex items-center gap-2">
                       <StepDot n={parseInt(n)} current={step} label={label} />
                       {i < 3 && (
-                        <div className={`h-px transition-all ${parseInt(n) < step ? "bg-emerald-300" : "bg-slate-200"}`}
-                          style={{ width: "20px" }} />
+                        <div className="relative h-px bg-slate-200 overflow-hidden" style={{ width: "20px" }}>
+                          <motion.div
+                            className="absolute inset-0 bg-emerald-400"
+                            style={{ transformOrigin: "left" }}
+                            initial={false}
+                            animate={{ scaleX: parseInt(n) < step ? 1 : 0 }}
+                            transition={{ duration: 0.3 }}
+                          />
+                        </div>
                       )}
                     </div>
                   ))}
@@ -502,30 +630,169 @@ export default function Appointments() {
                 {/* ── STEP 1: Doctor ── */}
                 {step === 1 && (
                   <motion.div initial={{ opacity: 0, x: 10 }} animate={{ opacity: 1, x: 0 }}>
-                    <p className="text-sm font-bold text-slate-700 mb-4">Choose your doctor</p>
-                    <div className="space-y-2 max-h-80 overflow-y-auto pr-0.5">
-                      {doctors.length === 0 ? (
-                        <p className="text-slate-400 text-sm text-center py-8">No doctors available</p>
-                      ) : doctors.map(d => (
-                        <button
-                          key={d.doctor_id}
-                          onClick={() => { setSelectedDoc(d); setStep(2); }}
-                          className="w-full flex items-center gap-3 p-4 border border-slate-200 rounded-2xl hover:border-sky-300 hover:bg-sky-50/40 transition-all text-left group"
-                        >
-                          <div className="w-12 h-12 rounded-2xl flex items-center justify-center flex-shrink-0 text-white text-sm font-bold shadow-md"
-                            style={{ background: "linear-gradient(135deg, #2176AE, #1A4A7A)" }}>
-                            {d.first_name[0]}{d.last_name[0]}
-                          </div>
-                          <div className="flex-1 min-w-0">
-                            <p className="text-slate-800 text-sm font-bold">Dr. {d.first_name} {d.last_name}</p>
-                            <p className="text-slate-400 text-xs mt-0.5">{d.specialization}</p>
-                          </div>
-                          <div className="w-8 h-8 rounded-xl flex items-center justify-center bg-slate-100 group-hover:bg-sky-100 transition-colors">
-                            <ChevronRight size={14} className="text-slate-400 group-hover:text-sky-500" />
-                          </div>
-                        </button>
-                      ))}
+                    <div className="flex items-center justify-between mb-3">
+                      <p className="text-sm font-bold text-slate-700">Choose your doctor</p>
+                      <button
+                        onClick={() => setShowSymptomBox(v => !v)}
+                        className="flex items-center gap-1 text-xs font-semibold transition-colors"
+                        style={{ color: "#2176AE" }}
+                      >
+                        <Sparkles size={12} /> Not sure who to see?
+                      </button>
                     </div>
+
+                    {/* AI symptom → specialty assistant */}
+                    <AnimatePresence>
+                      {showSymptomBox && (
+                        <motion.div
+                          initial={{ opacity: 0, height: 0 }}
+                          animate={{ opacity: 1, height: "auto" }}
+                          exit={{ opacity: 0, height: 0 }}
+                          className="overflow-hidden"
+                        >
+                          <div className="rounded-2xl p-3.5 mb-3"
+                            style={{ background: "rgba(33,118,174,0.05)", border: "1px solid rgba(33,118,174,0.15)" }}>
+                            <textarea
+                              rows={2}
+                              placeholder="Briefly describe your symptoms (e.g. chest pain and shortness of breath)..."
+                              value={symptoms}
+                              onChange={e => setSymptoms(e.target.value)}
+                              className="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-sky-400 bg-white resize-none"
+                            />
+                            <div className="flex items-center justify-between mt-2">
+                              <button
+                                onClick={handleSuggestSpecialty}
+                                disabled={suggesting || !symptoms.trim()}
+                                className="flex items-center gap-1.5 px-3 py-1.5 text-white text-xs font-semibold rounded-xl transition-all disabled:opacity-50"
+                                style={{ background: "linear-gradient(135deg, #2176AE, #1A4A7A)" }}
+                              >
+                                {suggesting
+                                  ? <><Loader2 size={12} className="animate-spin" /> Thinking...</>
+                                  : <><Sparkles size={12} /> Suggest a specialty</>
+                                }
+                              </button>
+                            </div>
+                            {suggestion && (
+                              <motion.p
+                                initial={{ opacity: 0, y: 4 }}
+                                animate={{ opacity: 1, y: 0 }}
+                                className="text-xs mt-2.5 leading-relaxed"
+                                style={{ color: suggestion.specialty ? "#1A4A7A" : "#94a3b8" }}
+                              >
+                                {suggestion.specialty
+                                  ? <>Recommended: <strong>{suggestion.specialty}</strong> — {suggestion.reason}</>
+                                  : suggestion.reason
+                                }
+                              </motion.p>
+                            )}
+                          </div>
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
+
+                    {/* Search */}
+                    <div className="relative mb-3">
+                      <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" size={14} />
+                      <input
+                        type="text"
+                        placeholder="Search by name or specialty..."
+                        value={doctorSearch}
+                        onChange={e => setDoctorSearch(e.target.value)}
+                        className="w-full pl-10 pr-9 py-2.5 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-sky-400 bg-slate-50 transition-all"
+                      />
+                      {doctorSearch && (
+                        <button
+                          onClick={() => setDoctorSearch("")}
+                          aria-label="Clear search"
+                          className="absolute right-3 top-1/2 -translate-y-1/2 w-5 h-5 flex items-center justify-center rounded-full bg-slate-200 hover:bg-slate-300 transition-colors"
+                        >
+                          <X size={11} className="text-slate-500" />
+                        </button>
+                      )}
+                    </div>
+
+                    {/* Specialty pills */}
+                    {specialties.length > 1 && (
+                      <div className="flex items-center gap-1.5 mb-4 overflow-x-auto pb-1">
+                        <motion.button
+                          initial={{ opacity: 0, y: 6 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          onClick={() => setSpecialtyFilter("all")}
+                          className={`flex-shrink-0 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all whitespace-nowrap ${specialtyFilter === "all" ? "" : "bg-white"}`}
+                          style={specialtyFilter === "all"
+                            ? { background: "rgba(33,118,174,0.12)", color: "#2176AE", border: "1px solid rgba(33,118,174,0.25)" }
+                            : { color: "#94a3b8", border: "1px solid #e2e8f0" }
+                          }
+                        >
+                          All
+                        </motion.button>
+                        {specialties.map((s, i) => (
+                          <motion.button
+                            key={s}
+                            initial={{ opacity: 0, y: 6 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            transition={{ delay: Math.min(i, 10) * 0.03 }}
+                            onClick={() => setSpecialtyFilter(s)}
+                            className={`flex-shrink-0 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all whitespace-nowrap ${specialtyFilter === s ? "" : "bg-white"}`}
+                            style={specialtyFilter === s
+                              ? { background: "rgba(33,118,174,0.12)", color: "#2176AE", border: "1px solid rgba(33,118,174,0.25)" }
+                              : { color: "#94a3b8", border: "1px solid #e2e8f0" }
+                            }
+                          >
+                            {s}
+                          </motion.button>
+                        ))}
+                      </div>
+                    )}
+
+                    <AnimatePresence mode="wait">
+                      <motion.div
+                        key={isBrowsing ? "grouped" : "flat"}
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        exit={{ opacity: 0 }}
+                        transition={{ duration: 0.15 }}
+                        className="space-y-2 max-h-72 overflow-y-auto pr-0.5"
+                      >
+                        {doctors.length === 0 ? (
+                          <p className="text-slate-400 text-sm text-center py-8">No doctors available</p>
+                        ) : filteredDoctors.length === 0 ? (
+                          <EmptyState
+                            icon={Users}
+                            title="No doctors match"
+                            message="Try a different search or specialty"
+                            className="py-10"
+                          />
+                        ) : groupedEntries ? (
+                          groupedEntries.map(([specialty, docs]) => (
+                            <div key={specialty} className="mb-1">
+                              <p className="text-[11px] font-bold text-slate-400 uppercase tracking-wide mb-2 mt-1 first:mt-0">
+                                {specialty} <span className="text-slate-300 font-medium normal-case">· {docs.length}</span>
+                              </p>
+                              <div className="space-y-2">
+                                {docs.map((d, i) => (
+                                  <DoctorCard
+                                    key={d.doctor_id} d={d} index={i}
+                                    isFavorite={favorites.includes(d.doctor_id)}
+                                    onToggleFavorite={toggleFavorite}
+                                    onSelect={() => { setSelectedDoc(d); setStep(2); }}
+                                  />
+                                ))}
+                              </div>
+                            </div>
+                          ))
+                        ) : (
+                          filteredDoctors.map((d, i) => (
+                            <DoctorCard
+                              key={d.doctor_id} d={d} index={i}
+                              isFavorite={favorites.includes(d.doctor_id)}
+                              onToggleFavorite={toggleFavorite}
+                              onSelect={() => { setSelectedDoc(d); setStep(2); }}
+                            />
+                          ))
+                        )}
+                      </motion.div>
+                    </AnimatePresence>
                   </motion.div>
                 )}
 
@@ -546,7 +813,7 @@ export default function Appointments() {
                         <p className="text-slate-700 text-sm font-bold">Dr. {selectedDoc?.first_name} {selectedDoc?.last_name}</p>
                         <p className="text-slate-400 text-xs">{selectedDoc?.specialization}</p>
                       </div>
-                      <button onClick={() => setStep(1)} className="ml-auto text-slate-300 hover:text-slate-500">
+                      <button onClick={() => setStep(1)} aria-label="Change doctor" className="ml-auto text-slate-300 hover:text-slate-500">
                         <X size={14} />
                       </button>
                     </div>
@@ -564,9 +831,10 @@ export default function Appointments() {
                       {days.map((day, i) => {
                         const isWeekend = day.getDay() === 0 || day.getDay() === 6;
                         return (
-                          <button
+                          <motion.button
                             key={i}
                             disabled={isWeekend}
+                            whileTap={isWeekend ? {} : { scale: 0.93 }}
                             onClick={() => handleSelectDate(day)}
                             className={`relative flex flex-col items-center py-2.5 rounded-xl text-xs font-bold transition-all ${
                               isWeekend
@@ -578,7 +846,7 @@ export default function Appointments() {
                             <span className="text-[9px] opacity-60 mt-0.5">
                               {day.toLocaleDateString("en-IN", { month: "short" })}
                             </span>
-                          </button>
+                          </motion.button>
                         );
                       })}
                     </div>
@@ -640,9 +908,10 @@ export default function Appointments() {
                             const isBlocked = slot.blocked;
                             const available = slot.available;
                             return (
-                              <button
+                              <motion.button
                                 key={i}
                                 disabled={!available}
+                                whileTap={available ? { scale: 0.93 } : {}}
                                 onClick={() => { if (available) { setSelectedSlot(slot); setStep(4); } }}
                                 title={isBlocked ? "Doctor is unavailable" : !available ? "Not available" : ""}
                                 className={`py-2.5 rounded-xl text-xs font-semibold transition-all relative ${
@@ -657,7 +926,7 @@ export default function Appointments() {
                                 {isBlocked && (
                                   <span className="absolute -top-1 -right-1 w-3 h-3 bg-amber-400 rounded-full border border-white" />
                                 )}
-                              </button>
+                              </motion.button>
                             );
                           })}
                         </div>
@@ -695,7 +964,41 @@ export default function Appointments() {
                 )}
 
                 {/* ── STEP 4: Confirm ── */}
-                {step === 4 && (
+                {step === 4 && justBooked && (
+                  <motion.div
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    className="relative flex flex-col items-center justify-center py-12 overflow-hidden"
+                  >
+                    {[...Array(8)].map((_, i) => {
+                      const angle = (i / 8) * Math.PI * 2;
+                      const color = ["#2176AE", "#10b981", "#f59e0b", "#f43f5e"][i % 4];
+                      return (
+                        <motion.span
+                          key={i}
+                          className="absolute w-2 h-2 rounded-full top-1/2 left-1/2"
+                          style={{ background: color }}
+                          initial={{ opacity: 1, x: 0, y: 0, scale: 1 }}
+                          animate={{ opacity: 0, x: Math.cos(angle) * 80, y: Math.sin(angle) * 80, scale: 0 }}
+                          transition={{ duration: 0.9, ease: "easeOut" }}
+                        />
+                      );
+                    })}
+                    <motion.div
+                      initial={{ scale: 0 }}
+                      animate={{ scale: 1 }}
+                      transition={{ type: "spring", stiffness: 260, damping: 18 }}
+                      className="relative w-16 h-16 rounded-full flex items-center justify-center mb-4"
+                      style={{ background: "linear-gradient(135deg, #10b981, #059669)" }}
+                    >
+                      <CheckCircle size={30} className="text-white" />
+                    </motion.div>
+                    <p className="relative text-slate-800 font-bold text-lg">Appointment booked!</p>
+                    <p className="relative text-slate-400 text-sm mt-1">See you soon, take care.</p>
+                  </motion.div>
+                )}
+
+                {step === 4 && !justBooked && (
                   <motion.div initial={{ opacity: 0, x: 10 }} animate={{ opacity: 1, x: 0 }}>
                     <button onClick={() => setStep(3)} className="flex items-center gap-1 text-xs text-slate-400 hover:text-slate-600 mb-4 transition-colors">
                       <ChevronLeft size={13} /> Back
@@ -740,9 +1043,9 @@ export default function Appointments() {
                       <p className="text-xs text-slate-400 mt-1">{reason.length}/200 characters</p>
                     </div>
 
-                    {error && (
+                    {bookError && (
                       <div className="flex items-center gap-2 text-red-600 text-xs mb-3 px-3 py-2.5 bg-red-50 rounded-xl border border-red-100">
-                        <AlertCircle size={14} className="flex-shrink-0" /> {error}
+                        <AlertCircle size={14} className="flex-shrink-0" /> {bookError}
                       </div>
                     )}
 
@@ -804,6 +1107,7 @@ export default function Appointments() {
         )}
       </AnimatePresence>
 
+      </PageWrapper>
     </PatientLayout>
   );
 }

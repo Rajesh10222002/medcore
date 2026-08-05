@@ -93,3 +93,52 @@ def test_signup_duplicate_email_rejected(client):
         "phone":         "9998887777",
     })
     assert res.status_code == 409
+
+
+def test_change_password_requires_auth(client):
+    res = client.put("/api/auth/change-password", json={
+        "current_password": "x", "new_password": "y" * 10
+    })
+    assert res.status_code in (401, 403)
+
+
+def test_change_password_wrong_current_rejected(client, test_patient, auth_header):
+    res = client.put(
+        "/api/auth/change-password",
+        json={"current_password": "wrongpassword", "new_password": "newpassword123"},
+        headers=auth_header(test_patient["token"]),
+    )
+    assert res.status_code == 401
+
+
+def test_change_password_too_short_rejected(client, test_patient, auth_header):
+    res = client.put(
+        "/api/auth/change-password",
+        json={"current_password": "citest1234", "new_password": "short"},
+        headers=auth_header(test_patient["token"]),
+    )
+    assert res.status_code == 400
+
+
+def test_change_password_success_round_trip(client, test_patient, auth_header):
+    headers = auth_header(test_patient["token"])
+
+    res = client.put(
+        "/api/auth/change-password",
+        json={"current_password": "citest1234", "new_password": "newpassword123"},
+        headers=headers,
+    )
+    assert res.status_code == 200
+
+    login_new = client.post("/api/auth/login", json={
+        "email": test_patient["email"], "password": "newpassword123"
+    })
+    assert login_new.status_code == 200
+
+    # revert so the fixture's known password stays valid for any later use
+    revert = client.put(
+        "/api/auth/change-password",
+        json={"current_password": "newpassword123", "new_password": "citest1234"},
+        headers=headers,
+    )
+    assert revert.status_code == 200

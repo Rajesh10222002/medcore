@@ -1,7 +1,11 @@
 import { useState, useEffect } from "react";
-import { useParams, useNavigate } from "react-router-dom";
+import { useParams, useNavigate, useSearchParams } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import DoctorLayout from "../../components/DoctorLayout";
+import PageWrapper from "../../components/shared/PageWrapper";
+import { SkeletonCard } from "../../components/shared/SkeletonCard";
+import EmptyState from "../../components/shared/EmptyState";
+import Modal from "../../components/shared/Modal";
 import {
   getDoctorPatient, saveVitals,
   getPatientSummaryAI, checkDrugInteractions,
@@ -13,35 +17,10 @@ import {
   ArrowLeft, FileText, Pill,
   Activity, AlertTriangle, Loader2,
   CheckCircle, AlertCircle, Plus,
-  X, Sparkles, ShieldAlert,
+  Sparkles, ShieldAlert,
   ChevronDown, ChevronUp, Calendar,
-  Heart, Wind, Thermometer, Droplets
+  Heart, Wind, Thermometer, Droplets, UserX
 } from "lucide-react";
-
-// ── Modal wrapper ───────────────────────
-function Modal({ title, onClose, children }) {
-  return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 px-4">
-      <motion.div
-        initial={{ opacity: 0, scale: 0.95 }}
-        animate={{ opacity: 1, scale: 1 }}
-        exit={{ opacity: 0, scale: 0.95 }}
-        className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden"
-      >
-        <div className="flex items-center justify-between p-5 border-b border-slate-100">
-          <h3 className="font-semibold text-slate-800">{title}</h3>
-          <button
-            onClick={onClose}
-            className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-slate-100"
-          >
-            <X size={18} className="text-slate-400" />
-          </button>
-        </div>
-        <div className="p-5">{children}</div>
-      </motion.div>
-    </div>
-  );
-}
 
 // ── Vitals card ─────────────────────────
 function VitalCard({ icon: Icon, label, value, unit, color, bg }) {
@@ -55,9 +34,17 @@ function VitalCard({ icon: Icon, label, value, unit, color, bg }) {
   );
 }
 
+const BACK_TARGETS = {
+  schedule:  { to: "/doctor/schedule",  label: "Back to Schedule"  },
+  dashboard: { to: "/doctor",           label: "Back to Dashboard" },
+};
+
 export default function PatientDetail() {
   const { id }   = useParams();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const { to: backTarget, label: backLabel } =
+    BACK_TARGETS[searchParams.get("from")] || { to: "/doctor/patients", label: "Back to Patients" };
 
   // ── STATE ──────────────────────────────
   const [patient,        setPatient]        = useState(null);
@@ -282,26 +269,58 @@ export default function PatientDetail() {
   // ── LOADING ────────────────────────────
   if (loading) return (
     <DoctorLayout>
-      <div className="flex items-center justify-center h-64">
-        <Loader2 className="animate-spin text-emerald-500" size={32} />
+      <div className="h-4 w-32 bg-slate-100 rounded animate-pulse mb-6" />
+      <SkeletonCard />
+      <div className="grid grid-cols-2 gap-6 mt-4">
+        <SkeletonCard />
+        <SkeletonCard />
       </div>
     </DoctorLayout>
   );
 
-  return (
+  // ── NOT FOUND ──────────────────────────
+  if (!patient) return (
     <DoctorLayout>
+      <PageWrapper>
+        <button
+          onClick={() => navigate("/doctor/patients")}
+          className="flex items-center gap-2 text-slate-500 hover:text-slate-700 text-sm mb-6 transition-colors"
+        >
+          <ArrowLeft size={16} /> Back to Patients
+        </button>
+        <EmptyState
+          icon={UserX}
+          title="Patient not found"
+          message="This patient may have been removed, or the link is incorrect."
+          className="py-20"
+          action={
+            <button
+              onClick={() => navigate("/doctor/patients")}
+              className="px-4 py-2 bg-emerald-500 hover:bg-emerald-600 text-white text-xs font-medium rounded-xl transition-colors"
+            >
+              Back to Patients
+            </button>
+          }
+        />
+      </PageWrapper>
+    </DoctorLayout>
+  );
+
+  return (
+    <DoctorLayout title={`${patient.first_name} ${patient.last_name}`} subtitle="Full clinical view">
+      <PageWrapper>
 
       {/* Back */}
       <button
-        onClick={() => navigate("/doctor")}
+        onClick={() => navigate(backTarget)}
         className="flex items-center gap-2 text-slate-500 hover:text-slate-700 text-sm mb-6 transition-colors"
       >
-        <ArrowLeft size={16} /> Back to Patients
+        <ArrowLeft size={16} /> {backLabel}
       </button>
 
       {/* Patient header */}
       <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-6 mb-4">
-        <div className="flex items-center gap-5">
+        <div className="flex items-center gap-5 flex-wrap">
           <div className="w-16 h-16 bg-gradient-to-br from-emerald-500 to-teal-400 rounded-2xl flex items-center justify-center shadow-lg flex-shrink-0">
             <span className="text-white text-xl font-bold">
               {patient?.first_name?.[0]}{patient?.last_name?.[0]}
@@ -450,13 +469,13 @@ export default function PatientDetail() {
         </div>
 
         {latestVitals.length === 0 ? (
-          <div className="p-8 text-center">
-            <Activity className="text-slate-200 mx-auto mb-2" size={32} />
-            <p className="text-slate-400 text-sm">No vitals recorded yet</p>
-            <p className="text-slate-300 text-xs mt-1">
-              Click "Record Vitals" to add the first reading
-            </p>
-          </div>
+          <EmptyState
+            icon={Activity}
+            title="No vitals recorded yet"
+            message='Click "Record Vitals" to add the first reading'
+            className="py-8"
+            size={32}
+          />
         ) : (
           <div className="p-5">
             {/* Latest vitals as cards */}
@@ -559,10 +578,13 @@ export default function PatientDetail() {
           </div>
           <div className="divide-y divide-slate-50 max-h-52 overflow-y-auto">
             {patient?.fhir?.conditions?.length === 0 ? (
-              <div className="p-6 text-center">
-                <p className="text-slate-400 text-sm">No diagnoses recorded</p>
-                <p className="text-slate-300 text-xs mt-1">Click "Add" to record a diagnosis</p>
-              </div>
+              <EmptyState
+                icon={FileText}
+                title="No diagnoses recorded"
+                message='Click "Add" to record a diagnosis'
+                className="py-6"
+                size={28}
+              />
             ) : (
               patient?.fhir?.conditions?.map((c, i) => (
                 <div key={i} className="p-4">
@@ -598,10 +620,13 @@ export default function PatientDetail() {
           </div>
           <div className="divide-y divide-slate-50 max-h-52 overflow-y-auto">
             {patient?.fhir?.medications?.length === 0 ? (
-              <div className="p-6 text-center">
-                <p className="text-slate-400 text-sm">No medications recorded</p>
-                <p className="text-slate-300 text-xs mt-1">Click "Add" to prescribe a medication</p>
-              </div>
+              <EmptyState
+                icon={Pill}
+                title="No medications recorded"
+                message='Click "Add" to prescribe a medication'
+                className="py-6"
+                size={28}
+              />
             ) : (
               patient?.fhir?.medications?.map((m, i) => (
                 <div key={i} className="p-4 flex items-center justify-between">
@@ -697,10 +722,13 @@ export default function PatientDetail() {
           </div>
           <div className="divide-y divide-slate-50">
             {patient?.fhir?.allergies?.length === 0 ? (
-              <div className="p-6 text-center">
-                <p className="text-slate-400 text-sm">No allergies recorded</p>
-                <p className="text-slate-300 text-xs mt-1">Click "Add" to record an allergy</p>
-              </div>
+              <EmptyState
+                icon={AlertTriangle}
+                title="No allergies recorded"
+                message='Click "Add" to record an allergy'
+                className="py-6"
+                size={28}
+              />
             ) : (
               patient?.fhir?.allergies?.map((a, i) => (
                 <div key={i} className="p-4 flex items-center justify-between">
@@ -727,15 +755,20 @@ export default function PatientDetail() {
           </div>
           <div className="divide-y divide-slate-50">
             {patient?.notes?.length === 0 ? (
-              <div className="p-8 text-center">
-                <p className="text-slate-400 text-sm">No notes yet</p>
-                <button
-                  onClick={() => navigate(`/doctor/notes?patient=${id}`)}
-                  className="mt-3 px-4 py-2 bg-emerald-500 hover:bg-emerald-600 text-white text-xs font-medium rounded-xl transition-colors"
-                >
-                  Write First Note
-                </button>
-              </div>
+              <EmptyState
+                icon={FileText}
+                title="No notes yet"
+                className="py-8"
+                size={28}
+                action={
+                  <button
+                    onClick={() => navigate(`/doctor/notes?patient=${id}`)}
+                    className="px-4 py-2 bg-emerald-500 hover:bg-emerald-600 text-white text-xs font-medium rounded-xl transition-colors"
+                  >
+                    Write First Note
+                  </button>
+                }
+              />
             ) : (
               patient?.notes?.map(note => (
                 <div key={note.note_id} className="p-4">
@@ -746,6 +779,47 @@ export default function PatientDetail() {
                     <span className="text-xs text-slate-400">{note.created_at?.slice(0,10)}</span>
                   </div>
                   <p className="text-slate-700 text-sm leading-relaxed">{note.note_text}</p>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+
+        {/* Visit history */}
+        <div className="bg-white rounded-2xl border border-slate-100 shadow-sm col-span-2">
+          <div className="flex items-center gap-3 p-5 border-b border-slate-100">
+            <div className="w-8 h-8 bg-slate-100 rounded-lg flex items-center justify-center">
+              <Calendar size={16} className="text-slate-500" />
+            </div>
+            <h3 className="font-semibold text-slate-800">Visit History</h3>
+            <span className="text-xs text-slate-400 ml-auto">
+              {patient?.appointments?.length || 0} recent visits
+            </span>
+          </div>
+          <div className="divide-y divide-slate-50">
+            {patient?.appointments?.length === 0 ? (
+              <EmptyState
+                icon={Calendar}
+                title="No visits recorded"
+                className="py-8"
+                size={28}
+              />
+            ) : (
+              patient?.appointments?.map(appt => (
+                <div key={appt.appointment_id} className="p-4 flex items-center justify-between">
+                  <div>
+                    <p className="text-slate-800 text-sm font-medium">
+                      {appt.appointment_date?.slice(0, 10)}
+                    </p>
+                    <p className="text-slate-400 text-xs mt-0.5">{appt.reason}</p>
+                  </div>
+                  <span className={`text-xs px-2.5 py-0.5 rounded-full font-medium capitalize ${
+                    appt.status === "scheduled" ? "bg-blue-50 text-blue-600" :
+                    appt.status === "completed" ? "bg-green-50 text-green-600" :
+                    "bg-red-50 text-red-500"
+                  }`}>
+                    {appt.status}
+                  </span>
                 </div>
               ))
             )}
@@ -988,6 +1062,7 @@ export default function PatientDetail() {
         )}
       </AnimatePresence>
 
+      </PageWrapper>
     </DoctorLayout>
   );
 }

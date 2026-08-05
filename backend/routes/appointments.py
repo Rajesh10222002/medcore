@@ -42,7 +42,8 @@ def get_my_appointments():
                 a.reason,
                 a.no_show_risk,
                 d.first_name || ' ' || d.last_name AS doctor_name,
-                d.specialization
+                d.specialization,
+                a.doctor_id
             FROM appointments a
             JOIN doctors d ON a.doctor_id = d.doctor_id
             WHERE a.patient_id = %s
@@ -56,7 +57,8 @@ def get_my_appointments():
             "reason":           r[3],
             "no_show_risk":     float(r[4]) if r[4] else None,
             "doctor_name":      r[5],
-            "specialization":   r[6]
+            "specialization":   r[6],
+            "doctor_id":        r[7]
         } for r in rows]), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -75,18 +77,23 @@ def get_doctors():
     cur  = conn.cursor()
     try:
         cur.execute("""
-            SELECT doctor_id, first_name, last_name,
-                   specialization, phone, email
-            FROM doctors ORDER BY first_name
+            SELECT d.doctor_id, d.first_name, d.last_name,
+                   d.specialization, d.phone, d.email,
+                   COUNT(DISTINCT CASE WHEN a.status = 'completed' THEN a.patient_id END) AS patients_treated
+            FROM doctors d
+            LEFT JOIN appointments a ON a.doctor_id = d.doctor_id
+            GROUP BY d.doctor_id, d.first_name, d.last_name, d.specialization, d.phone, d.email
+            ORDER BY d.first_name
         """)
         rows = cur.fetchall()
         return jsonify([{
-            "doctor_id":      r[0],
-            "first_name":     r[1],
-            "last_name":      r[2],
-            "specialization": r[3],
-            "phone":          r[4],
-            "email":          r[5]
+            "doctor_id":        r[0],
+            "first_name":       r[1],
+            "last_name":        r[2],
+            "specialization":   r[3],
+            "phone":            r[4],
+            "email":            r[5],
+            "patients_treated": r[6]
         } for r in rows]), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 500

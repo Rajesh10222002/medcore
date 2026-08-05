@@ -1,9 +1,12 @@
+import { useState, useEffect } from "react";
 import { NavLink, useNavigate, useLocation } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
+import { useTheme } from "../context/ThemeContext";
 import {
   Heart, LayoutDashboard, Calendar,
   FileText, MessageSquare, LogOut,
-  ChevronRight, Activity
+  ChevronRight, Activity, Settings,
+  Sun, Moon, Menu, X
 } from "lucide-react";
 
 const navItems = [
@@ -35,6 +38,13 @@ const navItems = [
     end:   false,
     desc:  "Ask anything"
   },
+  {
+    to:    "/patient/settings",
+    icon:  Settings,
+    label: "Settings",
+    end:   false,
+    desc:  "Account & security"
+  },
 ];
 
 // Page title map — shows in top header
@@ -43,20 +53,43 @@ const pageTitles = {
   "/patient/appointments": { title: "Appointments",    sub: "Book and manage your visits"      },
   "/patient/history":      { title: "Clinical History",sub: "Your medical records"             },
   "/patient/chatbot":      { title: "AI Health Chat",  sub: "Ask anything about your health"   },
+  "/patient/settings":     { title: "Settings",        sub: "Account & security"               },
 };
 
-export default function PatientLayout({ children }) {
+export default function PatientLayout({ children, title, subtitle }) {
   const { user, logout } = useAuth();
+  const { theme, toggleTheme } = useTheme();
   const navigate         = useNavigate();
   const location         = useLocation();
-  const page             = pageTitles[location.pathname] || { title: "MedCore AI", sub: "" };
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const page             = title
+    ? { title, sub: subtitle || "" }
+    : pageTitles[location.pathname] || { title: "MedCore AI", sub: "" };
   const initials         = user?.name?.split(" ").map(n => n[0]).join("").slice(0, 2) || "P";
 
+  useEffect(() => { setSidebarOpen(false); }, [location.pathname]);
+
+  useEffect(() => {
+    const handleKey = (e) => { if (e.key === "Escape") setSidebarOpen(false); };
+    document.addEventListener("keydown", handleKey);
+    return () => document.removeEventListener("keydown", handleKey);
+  }, []);
+
   return (
-    <div className="flex min-h-screen bg-[#f0f4f8]">
+    <div className="flex min-h-screen bg-[#f0f4f8] dark:bg-[#0f172a]">
+
+      {/* ── MOBILE BACKDROP ── */}
+      {sidebarOpen && (
+        <div
+          className="fixed inset-0 bg-black/40 z-20 lg:hidden"
+          onClick={() => setSidebarOpen(false)}
+        />
+      )}
 
       {/* ── SIDEBAR ── */}
-      <aside className="w-64 flex flex-col fixed h-full z-20"
+      <aside className={`w-64 flex flex-col fixed h-full z-30 transition-transform duration-300 lg:translate-x-0 ${
+        sidebarOpen ? "translate-x-0" : "-translate-x-full"
+      }`}
         style={{ background: "linear-gradient(180deg, #0D2137 0%, #0F2A45 60%, #0D2137 100%)" }}>
 
         {/* Top glow */}
@@ -65,19 +98,28 @@ export default function PatientLayout({ children }) {
 
         {/* Logo */}
         <div className="relative px-5 py-5 border-b border-white/8">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-2xl flex items-center justify-center shadow-lg flex-shrink-0"
-              style={{ background: "linear-gradient(135deg, #2176AE, #1A4A7A)" }}>
-              <Heart size={18} className="text-white" />
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-2xl flex items-center justify-center shadow-lg flex-shrink-0"
+                style={{ background: "linear-gradient(135deg, #2176AE, #1A4A7A)" }}>
+                <Heart size={18} className="text-white" />
+              </div>
+              <div>
+                <h1 className="text-white font-bold text-base leading-tight">
+                  MedCore <span className="text-sky-400">AI</span>
+                </h1>
+                <p className="text-white/35 text-[10px] mt-0.5 uppercase tracking-widest">
+                  Patient Portal
+                </p>
+              </div>
             </div>
-            <div>
-              <h1 className="text-white font-bold text-base leading-tight">
-                MedCore <span className="text-sky-400">AI</span>
-              </h1>
-              <p className="text-white/35 text-[10px] mt-0.5 uppercase tracking-widest">
-                Patient Portal
-              </p>
-            </div>
+            <button
+              onClick={() => setSidebarOpen(false)}
+              aria-label="Close menu"
+              className="lg:hidden w-8 h-8 flex items-center justify-center rounded-lg hover:bg-white/10 text-white/60 flex-shrink-0"
+            >
+              <X size={16} />
+            </button>
           </div>
         </div>
 
@@ -187,34 +229,53 @@ export default function PatientLayout({ children }) {
       </aside>
 
       {/* ── MAIN CONTENT ── */}
-      <main className="flex-1 ml-64 flex flex-col min-h-screen">
+      <main className="flex-1 lg:ml-64 flex flex-col min-h-screen">
 
         {/* Top header */}
-        <header className="sticky top-0 z-10 bg-white/80 backdrop-blur-md border-b border-slate-200/70 px-8 py-3.5"
+        <header className="sticky top-0 z-10 bg-white/80 dark:bg-slate-900/80 backdrop-blur-md border-b border-slate-200/70 dark:border-slate-700/70 px-4 sm:px-8 py-3.5"
           style={{ boxShadow: "0 1px 20px rgba(0,0,0,0.04)" }}>
           <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-3 min-w-0">
+              <button
+                onClick={() => setSidebarOpen(true)}
+                aria-label="Open menu"
+                className="lg:hidden w-9 h-9 flex items-center justify-center rounded-lg border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors flex-shrink-0"
+              >
+                <Menu size={16} className="text-slate-500 dark:text-slate-300" />
+              </button>
               {/* Breadcrumb */}
-              <div>
+              <div className="min-w-0">
                 <div className="flex items-center gap-2">
-                  <span className="text-slate-300 text-xs">Patient Portal</span>
-                  <ChevronRight size={12} className="text-slate-300" />
-                  <span className="text-slate-700 text-sm font-semibold">{page.title}</span>
+                  <span className="text-slate-300 dark:text-slate-500 text-xs hidden sm:inline">Patient Portal</span>
+                  <ChevronRight size={12} className="text-slate-300 dark:text-slate-500 hidden sm:inline" />
+                  <span className="text-slate-700 dark:text-slate-100 text-sm font-semibold truncate">{page.title}</span>
                 </div>
-                <p className="text-slate-400 text-xs mt-0.5">{page.sub}</p>
+                <p className="text-slate-400 text-xs mt-0.5 truncate">{page.sub}</p>
               </div>
             </div>
 
             <div className="flex items-center gap-3">
               {/* Date */}
               <div className="text-right hidden sm:block">
-                <p className="text-slate-700 text-xs font-medium">
+                <p className="text-slate-700 dark:text-slate-200 text-xs font-medium">
                   {new Date().toLocaleDateString("en-IN", { weekday: "long", day: "numeric", month: "long" })}
                 </p>
                 <p className="text-slate-400 text-xs">{new Date().getFullYear()}</p>
               </div>
+              {/* Theme toggle */}
+              <button
+                onClick={toggleTheme}
+                className="w-8 h-8 flex items-center justify-center rounded-full border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+                title={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
+                aria-label={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
+              >
+                {theme === "dark"
+                  ? <Sun size={14} className="text-amber-400" />
+                  : <Moon size={14} className="text-slate-500" />
+                }
+              </button>
               {/* Status pill */}
-              <div className="flex items-center gap-2 px-3 py-1.5 rounded-full border"
+              <div className="hidden sm:flex items-center gap-2 px-3 py-1.5 rounded-full border"
                 style={{ background: "rgba(16,185,129,0.06)", borderColor: "rgba(16,185,129,0.2)" }}>
                 <div className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse" />
                 <span className="text-emerald-600 text-xs font-medium">Active</span>

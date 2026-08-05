@@ -16,6 +16,8 @@ export const signup = (data) =>
   axios.post(`${BASE}/auth/signup`, data);
 export const login = (data) =>
   axios.post(`${BASE}/auth/login`, data);
+export const changePassword = (data) =>
+  axios.put(`${BASE}/auth/change-password`, data);
 
 // ── PATIENTS ──────────────────────────────────────────
 export const getMyProfile    = ()   => axios.get(`${BASE}/patients/me`);
@@ -36,7 +38,8 @@ export const getAvailableSlots  = (doc, date) =>
 
 // ── DOCTOR PORTAL ─────────────────────────────────────
 export const getDoctorProfile   = ()       => axios.get(`${BASE}/doctor/me`);
-export const getDoctorPatients  = ()       => axios.get(`${BASE}/doctor/patients`);
+export const getDoctorAnalytics = ()       => axios.get(`${BASE}/doctor/analytics`);
+export const getDoctorPatients  = (params) => axios.get(`${BASE}/doctor/patients`, { params });
 export const getDoctorPatient   = (id)     => axios.get(`${BASE}/doctor/patients/${id}`);
 export const saveClinicalNote   = (id, d)  => axios.post(`${BASE}/doctor/notes/${id}`, d);
 export const saveVitals         = (id, d)  => axios.post(`${BASE}/doctor/vitals/${id}`, d);
@@ -55,13 +58,16 @@ export const chat                  = (data)   => axios.post(`${BASE}/ai/chat`, d
 export const getSuggestedQuestions = ()       => axios.get(`${BASE}/ai/suggested-questions`);
 export const getCopilot            = (data)   => axios.post(`${BASE}/ai/copilot`, data);
 export const parseNote             = (data)   => axios.post(`${BASE}/ai/parse-note`, data);
+export const suggestSpecialty      = (data)   => axios.post(`${BASE}/ai/suggest-specialty`, data);
 
 // ── ADMIN ─────────────────────────────────────────────
-export const getAdminKPIs         = ()     => axios.get(`${BASE}/admin/kpis`);
-export const getAdminPatients     = ()     => axios.get(`${BASE}/admin/patients`);
-export const getAdminDoctors      = ()     => axios.get(`${BASE}/admin/doctors`);
-export const createDoctor         = (data) => axios.post(`${BASE}/admin/doctors`, data);
-export const getAdminAppointments = ()     => axios.get(`${BASE}/admin/appointments`);
+export const getAdminKPIs         = ()       => axios.get(`${BASE}/admin/kpis`);
+export const getAdminPatients     = (params) => axios.get(`${BASE}/admin/patients`, { params });
+export const getAdminPatientDetail = (id)    => axios.get(`${BASE}/admin/patients/${id}`);
+export const getAdminDoctors      = ()       => axios.get(`${BASE}/admin/doctors`);
+export const getAdminDoctorDetail = (id)     => axios.get(`${BASE}/admin/doctors/${id}`);
+export const createDoctor         = (data)   => axios.post(`${BASE}/admin/doctors`, data);
+export const getAdminAppointments = (params) => axios.get(`${BASE}/admin/appointments`, { params });
 // ── SCHEDULE (Doctor leave & calendar) ────────────────
 export const getScheduleCalendar = ()         => axios.get(`${BASE}/doctor/schedule/calendar`);
 export const getScheduleLeaves   = ()         => axios.get(`${BASE}/doctor/schedule/leaves`);

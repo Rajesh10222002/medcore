@@ -1,8 +1,8 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
-
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
 
 * {
   box-sizing: border-box;
@@ -24,4 +24,59 @@ body {
 ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
 
 /* Smooth transitions globally */
-* { transition: background-color 0.15s ease, border-color 0.15s ease; }
+* { transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease; }
+
+/* ─────────────────────────────────────────
+   DARK MODE
+   The app is built almost entirely from a small set of recurring
+   Tailwind utility classes (bg-white cards, slate borders/text). Rather
+   than adding dark: variants to every className on every page, these
+   overrides retarget those same utility classes globally whenever the
+   "dark" class is present on <html> (toggled by ThemeContext). Higher
+   specificity (.dark .bg-white) wins over the plain utility regardless
+   of stylesheet order, so no !important is needed.
+   ───────────────────────────────────────── */
+.dark { color-scheme: dark; }
+
+.dark body { background-color: #0f172a; color: #e2e8f0; }
+
+.dark .bg-white { background-color: #1e293b; }
+.dark .bg-\[\#f0f4f8\],
+.dark .bg-\[\#f8fafc\] { background-color: #0f172a; }
+.dark .bg-slate-50  { background-color: #1e293b; }
+.dark .bg-slate-100 { background-color: #334155; }
+.dark .bg-slate-200 { background-color: #475569; }
+
+.dark .border-slate-100 { border-color: #334155; }
+.dark .border-slate-200 { border-color: #475569; }
+.dark .divide-slate-50  > :not([hidden]) ~ :not([hidden]) { border-color: #334155; }
+.dark .divide-slate-100 > :not([hidden]) ~ :not([hidden]) { border-color: #334155; }
+
+.dark .text-slate-800 { color: #f1f5f9; }
+.dark .text-slate-700 { color: #e2e8f0; }
+.dark .text-slate-600 { color: #cbd5e1; }
+.dark .text-slate-500 { color: #94a3b8; }
+.dark .text-slate-400 { color: #64748b; }
+.dark .text-slate-300 { color: #475569; }
+.dark .text-slate-200 { color: #334155; }
+
+.dark ::-webkit-scrollbar-track { background: #1e293b; }
+.dark ::-webkit-scrollbar-thumb { background: #475569; }
+.dark ::-webkit-scrollbar-thumb:hover { background: #64748b; }
+
+/* Stat cards with an inline gradient `style` (can't be reached by the
+   class-based overrides above — inline styles win over stylesheet rules
+   unless we use !important, which is the only way to defeat them). */
+.dark .stat-gradient-card {
+  background: linear-gradient(135deg, #1e293b, #334155) !important;
+}
+
+/* Small translucent status/badge pills set via inline `style` (rgba tint
+   designed against a white page background) — a brightness boost keeps
+   the same per-status color identity while lifting it clear of the dark
+   background instead of washing out. */
+.dark .status-badge,
+.dark .tab-count-pill,
+.dark .tint-badge {
+  filter: brightness(1.6);
+}

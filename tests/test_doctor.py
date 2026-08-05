@@ -4,10 +4,36 @@ def test_doctor_can_get_profile(client, doctor_token, auth_header):
     assert "specialization" in res.get_json()
 
 
+def test_doctor_can_get_analytics(client, doctor_token, auth_header):
+    res = client.get("/api/doctor/analytics", headers=auth_header(doctor_token))
+    assert res.status_code == 200
+    body = res.get_json()
+    assert isinstance(body["monthly_patients"], list) and len(body["monthly_patients"]) == 6
+    assert isinstance(body["by_status"], list)
+    assert isinstance(body["total_this_month"], int)
+    assert isinstance(body["total_last_month"], int)
+
+
+def test_doctor_analytics_requires_doctor_role(client, patient_token, admin_token, auth_header):
+    res = client.get("/api/doctor/analytics", headers=auth_header(patient_token))
+    assert res.status_code == 403
+    res = client.get("/api/doctor/analytics", headers=auth_header(admin_token))
+    assert res.status_code == 403
+
+
 def test_doctor_can_list_patients(client, doctor_token, auth_header):
     res = client.get("/api/doctor/patients", headers=auth_header(doctor_token))
     assert res.status_code == 200
-    assert isinstance(res.get_json(), list)
+    body = res.get_json()
+    assert isinstance(body["items"], list)
+    assert "total" in body and "stats" in body
+
+
+def test_doctor_patients_search_filters_results(client, doctor_token, auth_header):
+    res = client.get("/api/doctor/patients?search=zzzz_no_such_patient", headers=auth_header(doctor_token))
+    body = res.get_json()
+    assert body["items"] == []
+    assert body["total"] == 0
 
 
 def test_doctor_can_view_patient_detail(client, doctor_token, auth_header, test_patient):

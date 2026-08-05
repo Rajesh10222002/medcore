@@ -1,14 +1,17 @@
 import { useState, useEffect } from "react";
+import { useNavigate } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import AdminLayout from "../../components/AdminLayout";
 import PageWrapper from "../../components/shared/PageWrapper";
 import { SkeletonTable } from "../../components/shared/SkeletonCard";
+import EmptyState from "../../components/shared/EmptyState";
+import Modal from "../../components/shared/Modal";
 import { getAdminDoctors, createDoctor } from "../../api/api";
 import { showSuccess, showError } from "../../components/shared/Toast";
 import {
   UserPlus, Stethoscope, Plus,
-  X, CheckCircle, Loader2,
-  Mail, Phone, Award
+  CheckCircle, Loader2,
+  Mail, Phone, Award, ChevronRight
 } from "lucide-react";
 
 const SPECIALIZATIONS = [
@@ -19,6 +22,7 @@ const SPECIALIZATIONS = [
 ];
 
 export default function AdminDoctors() {
+  const navigate = useNavigate();
   const [doctors,   setDoctors]   = useState([]);
   const [loading,   setLoading]   = useState(true);
   const [showForm,  setShowForm]  = useState(false);
@@ -84,26 +88,8 @@ export default function AdminDoctors() {
         {/* Create doctor modal */}
         <AnimatePresence>
           {showForm && (
-            <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 px-4">
-              <motion.div
-                initial={{ opacity: 0, scale: 0.95 }}
-                animate={{ opacity: 1, scale: 1 }}
-                exit={{ opacity: 0, scale: 0.95 }}
-                className="bg-white rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden"
-              >
-                <div className="flex items-center justify-between p-6 border-b border-slate-100">
-                  <h3 className="font-semibold text-slate-800">
-                    Add New Doctor
-                  </h3>
-                  <button
-                    onClick={() => setShowForm(false)}
-                    className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-slate-100"
-                  >
-                    <X size={18} className="text-slate-400" />
-                  </button>
-                </div>
-
-                <form onSubmit={handleCreate} className="p-6 space-y-4">
+            <Modal title="Add New Doctor" onClose={() => setShowForm(false)} maxWidth="max-w-lg">
+                <form onSubmit={handleCreate} className="space-y-4">
 
                   <div className="grid grid-cols-2 gap-3">
                     <div>
@@ -215,8 +201,7 @@ export default function AdminDoctors() {
                     }
                   </button>
                 </form>
-              </motion.div>
-            </div>
+            </Modal>
           )}
         </AnimatePresence>
 
@@ -226,15 +211,11 @@ export default function AdminDoctors() {
             <h3 className="font-semibold text-slate-800">Doctor Accounts</h3>
           </div>
           {doctors.length === 0 ? (
-            <div className="p-12 text-center">
-              <Stethoscope className="text-slate-200 mx-auto mb-3" size={48} />
-              <p className="text-slate-400 text-sm font-medium">
-                No doctors yet
-              </p>
-              <p className="text-slate-300 text-xs mt-1">
-                Click "Add Doctor" to create the first doctor account
-              </p>
-            </div>
+            <EmptyState
+              icon={Stethoscope}
+              title="No doctors yet"
+              message='Click "Add Doctor" to create the first doctor account'
+            />
           ) : (
             <div className="divide-y divide-slate-50">
               {doctors.map((doc, i) => (
@@ -242,8 +223,11 @@ export default function AdminDoctors() {
                   key={doc.doctor_id}
                   initial={{ opacity: 0, x: -8 }}
                   animate={{ opacity: 1, x: 0 }}
-                  transition={{ delay: i * 0.05 }}
-                  className="flex items-center gap-4 p-4 hover:bg-slate-50 transition-colors"
+                  transition={{ delay: Math.min(i, 10) * 0.04 }}
+                  onClick={() => navigate(`/admin/doctors/${doc.doctor_id}`)}
+                  whileHover={{ y: -2 }}
+                  whileTap={{ scale: 0.98 }}
+                  className="flex items-center gap-4 p-4 hover:bg-slate-50 cursor-pointer transition-colors"
                 >
                   <div className="w-11 h-11 bg-gradient-to-br from-emerald-500 to-teal-400 rounded-full flex items-center justify-center flex-shrink-0 shadow">
                     <span className="text-white text-sm font-bold">
@@ -277,6 +261,7 @@ export default function AdminDoctors() {
                       Since {doc.created_at}
                     </p>
                   </div>
+                  <ChevronRight size={16} className="text-slate-300 flex-shrink-0" />
                 </motion.div>
               ))}
             </div>

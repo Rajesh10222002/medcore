@@ -48,6 +48,69 @@ def get_doctor_profile():
 
 
 # ─────────────────────────────────────────
+# GET /api/doctor/analytics
+# Practice analytics for the logged-in doctor's own Dashboard —
+# monthly patient trend + this month's status breakdown.
+# ─────────────────────────────────────────
+@doctors_bp.route("/doctor/analytics", methods=["GET"])
+@token_required
+@role_required(["doctor"])
+def get_doctor_analytics():
+    doctor_id = request.user.get("doctor_id")
+    conn = get_db()
+    cur  = conn.cursor()
+    try:
+        # Distinct completed patients per month, last 6 months
+        cur.execute("""
+            SELECT TO_CHAR(DATE_TRUNC('month', appointment_date), 'YYYY-MM') AS month,
+                   COUNT(DISTINCT patient_id) AS count
+            FROM appointments
+            WHERE doctor_id = %s
+              AND status = 'completed'
+              AND appointment_date >= DATE_TRUNC('month', CURRENT_DATE) - INTERVAL '5 months'
+            GROUP BY month
+            ORDER BY month ASC
+        """, (doctor_id,))
+        by_month = {r[0]: r[1] for r in cur.fetchall()}
+
+        monthly_patients = []
+        for i in range(5, -1, -1):
+            cur.execute("SELECT TO_CHAR(CURRENT_DATE - (INTERVAL '1 month' * %s), 'YYYY-MM')", (i,))
+            key = cur.fetchone()[0]
+            monthly_patients.append({"month": key, "count": by_month.get(key, 0)})
+
+        # This month's status breakdown
+        cur.execute("""
+            SELECT status, COUNT(*) FROM appointments
+            WHERE doctor_id = %s
+              AND DATE_TRUNC('month', appointment_date) = DATE_TRUNC('month', CURRENT_DATE)
+            GROUP BY status
+        """, (doctor_id,))
+        by_status = [{"status": r[0], "count": r[1]} for r in cur.fetchall()]
+
+        # Total appointments this month vs last month (for a trend indicator)
+        cur.execute("""
+            SELECT
+              SUM(CASE WHEN DATE_TRUNC('month', appointment_date) = DATE_TRUNC('month', CURRENT_DATE) THEN 1 ELSE 0 END),
+              SUM(CASE WHEN DATE_TRUNC('month', appointment_date) = DATE_TRUNC('month', CURRENT_DATE) - INTERVAL '1 month' THEN 1 ELSE 0 END)
+            FROM appointments WHERE doctor_id = %s
+        """, (doctor_id,))
+        row = cur.fetchone()
+
+        return jsonify({
+            "monthly_patients": monthly_patients,
+            "by_status":        by_status,
+            "total_this_month": row[0] or 0,
+            "total_last_month": row[1] or 0
+        }), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    finally:
+        cur.close()
+        conn.close()
+
+
+# ─────────────────────────────────────────
 # GET /api/doctor/patients
 # ─────────────────────────────────────────
 @doctors_bp.route("/doctor/patients", methods=["GET"])
@@ -55,10 +118,29 @@ def get_doctor_profile():
 @role_required(["doctor"])
 def get_my_patients():
     doctor_id = request.user.get("doctor_id")
+    page      = max(1, int(request.args.get("page", 1)))
+    per_page  = max(1, int(request.args.get("per_page", 20)))
+    search    = request.args.get("search", "").strip()
+
+    where_extra, params = "", [doctor_id]
+    if search:
+        like = f"%{search}%"
+        where_extra = " AND (p.first_name ILIKE %s OR p.last_name ILIKE %s OR p.email ILIKE %s)"
+        params.extend([like, like, like])
+
     conn = get_db()
     cur  = conn.cursor()
     try:
-        cur.execute("""
+        cur.execute(f"""
+            SELECT COUNT(DISTINCT p.patient_id)
+            FROM patients p
+            JOIN appointments a ON p.patient_id = a.patient_id
+            WHERE a.doctor_id = %s {where_extra}
+        """, params)
+        total = cur.fetchone()[0]
+
+        offset = (page - 1) * per_page
+        cur.execute(f"""
             SELECT DISTINCT
                 p.patient_id,
                 p.first_name,
@@ -72,12 +154,13 @@ def get_my_patients():
                 MAX(a.appointment_date) as last_visit
             FROM patients p
             JOIN appointments a ON p.patient_id = a.patient_id
-            WHERE a.doctor_id = %s
+            WHERE a.doctor_id = %s {where_extra}
             GROUP BY p.patient_id, p.first_name, p.last_name,
                      p.date_of_birth, p.gender, p.phone,
                      p.email, p.fhir_id
             ORDER BY last_visit DESC
-        """, (doctor_id,))
+            LIMIT %s OFFSET %s
+        """, params + [per_page, offset])
         rows = cur.fetchall()
         patients = []
         for r in rows:
@@ -102,7 +185,35 @@ def get_my_patients():
                 "total_visits":  r[8],
                 "last_visit":    str(r[9])[:10] if r[9] else None
             })
-        return jsonify(patients), 200
+
+        # Unfiltered aggregate stats for the stat cards — always reflect
+        # every patient this doctor has seen, independent of search.
+        cur.execute("""
+            SELECT COUNT(a.appointment_id) as visits, MAX(a.appointment_date) as last_visit
+            FROM appointments a
+            WHERE a.doctor_id = %s
+            GROUP BY a.patient_id
+        """, (doctor_id,))
+        stat_rows = cur.fetchall()
+        total_patients = len(stat_rows)
+        frequent_count = sum(1 for r in stat_rows if r[0] >= 5)
+        now = date.today()
+        new_this_month = sum(
+            1 for r in stat_rows
+            if r[1] and r[1].month == now.month and r[1].year == now.year
+        )
+
+        return jsonify({
+            "items":    patients,
+            "total":    total,
+            "page":     page,
+            "per_page": per_page,
+            "stats": {
+                "total":          total_patients,
+                "frequent":       frequent_count,
+                "new_this_month": new_this_month
+            }
+        }), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 500
     finally:

@@ -2,10 +2,12 @@ import { useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { useAuth } from "../../context/AuthContext";
 import { login as loginAPI } from "../../api/api";
+import PageWrapper from "../../components/shared/PageWrapper";
+import { showError } from "../../components/shared/Toast";
 import {
   Mail, Lock, ArrowRight,
-  AlertCircle, Heart, Activity,
-  Shield, Stethoscope, Sparkles
+  Heart, Activity,
+  Shield, Sparkles
 } from "lucide-react";
 
 // Left panel feature cards
@@ -42,7 +44,6 @@ const stats = [
 
 export default function Login() {
   const [form,    setForm]    = useState({ email: "", password: "" });
-  const [error,   setError]   = useState("");
   const [loading, setLoading] = useState(false);
   const { login }             = useAuth();
   const navigate              = useNavigate();
@@ -50,7 +51,6 @@ export default function Login() {
   const handleSubmit = async (e) => {
     e.preventDefault();
     setLoading(true);
-    setError("");
     try {
       const res = await loginAPI(form);
       const { token, role, name } = res.data;
@@ -59,12 +59,13 @@ export default function Login() {
       else if (role === "doctor")  navigate("/doctor");
       else if (role === "admin")   navigate("/admin");
     } catch (err) {
-      setError(err.response?.data?.error || "Invalid credentials. Please try again.");
+      showError(err.response?.data?.error || "Invalid credentials. Please try again.");
     }
     setLoading(false);
   };
 
   return (
+    <PageWrapper>
     <div className="min-h-screen flex">
 
       {/* ── LEFT PANEL — Brand ── */}
@@ -230,14 +231,6 @@ export default function Login() {
               </div>
             </div>
 
-            {/* Error */}
-            {error && (
-              <div className="flex items-center gap-3 bg-red-50 border border-red-100 text-red-600 px-4 py-3 rounded-2xl text-sm">
-                <AlertCircle size={16} className="flex-shrink-0" />
-                {error}
-              </div>
-            )}
-
             {/* Submit */}
             <button
               type="submit"
@@ -283,43 +276,6 @@ export default function Login() {
             </p>
           </div>
 
-          {/* Demo credentials */}
-          <div className="mt-8 rounded-2xl overflow-hidden border border-slate-200">
-            <div className="px-4 py-2.5 bg-slate-800">
-              <p className="text-white/60 text-xs font-semibold uppercase tracking-wide">
-                Demo Credentials
-              </p>
-            </div>
-            <div className="p-4 bg-white space-y-2">
-              {[
-                { role: "Admin",   icon: Shield,      color: "text-violet-600", email: "admin@medcore.ai",  pass: "admin123"  },
-                { role: "Doctor",  icon: Stethoscope, color: "text-emerald-600", email: "doctor@medcore.ai", pass: "admin123"  },
-                { role: "Patient", icon: Heart,       color: "text-sky-600",    email: "Sign up below",     pass: ""          },
-              ].map(({ role, icon: Icon, color, email, pass }) => (
-                <div key={role}
-                  className="flex items-center gap-3 p-2.5 rounded-xl cursor-pointer hover:bg-slate-50 transition-colors"
-                  onClick={() => {
-                    if (email !== "Sign up below") {
-                      setForm({ email, password: pass });
-                    }
-                  }}>
-                  <div className={`w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0 ${color === "text-violet-600" ? "bg-violet-50" : color === "text-emerald-600" ? "bg-emerald-50" : "bg-sky-50"}`}>
-                    <Icon size={13} className={color} />
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-slate-700 text-xs font-semibold">{role}</p>
-                    <p className="text-slate-400 text-[10px] truncate">
-                      {email}{pass ? ` · ${pass}` : ""}
-                    </p>
-                  </div>
-                  {email !== "Sign up below" && (
-                    <span className="text-[10px] text-slate-300 flex-shrink-0">click to fill</span>
-                  )}
-                </div>
-              ))}
-            </div>
-          </div>
-
           {/* Footer */}
           <p className="text-center text-xs text-slate-400 mt-6">
             Impact pSiddhi 3.0 · S4-I-07 · MedCore AI · All data is synthetic
@@ -327,5 +283,6 @@ export default function Login() {
         </div>
       </div>
     </div>
+    </PageWrapper>
   );
 }
