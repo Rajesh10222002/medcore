@@ -1,41 +1,15 @@
 from flask import Blueprint, request, jsonify
 from middleware.auth import token_required, role_required
 from db import get_db
-from google import genai
+from ai_client import generate_text
 import requests as http_req
 import os
 from dotenv import load_dotenv
 
 load_dotenv()
-FHIR_URL     = os.getenv("FHIR_BASE_URL")
-OLLAMA_URL   = os.getenv("OLLAMA_URL", "http://localhost:11434")
-OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.2:3b")
+FHIR_URL = os.getenv("FHIR_BASE_URL")
 
 ai_bp = Blueprint("ai", __name__)
-
-
-def get_gemini_client():
-    return genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
-
-
-def ollama_generate(prompt, temperature=0.7):
-    """
-    Call Ollama local API.
-    Returns the response text or raises an exception.
-    Falls back gracefully — caller should always have a try/except.
-    """
-    resp = http_req.post(
-        f"{OLLAMA_URL}/api/generate",
-        json={
-            "model":   OLLAMA_MODEL,
-            "prompt":  prompt,
-            "stream":  False,
-            "options": {"temperature": temperature}
-        },
-        timeout=60
-    )
-    resp.raise_for_status()
-    return resp.json().get("response", "").strip()
 
 
 def get_patient_context(patient_id, fhir_id, name):
@@ -215,7 +189,7 @@ Instructions:
 
 Response:"""
 
-        reply = ollama_generate(prompt)
+        reply = generate_text(prompt)
         return jsonify({"reply": reply}), 200
 
     except Exception as e:
@@ -378,7 +352,7 @@ List red flags to watch for.
 
 Keep response concise and clinically focused."""
 
-        reply = ollama_generate(prompt, temperature=0.3)
+        reply = generate_text(prompt, temperature=0.3)
         return jsonify({"reply": reply}), 200
 
     except Exception as e:
@@ -416,7 +390,7 @@ Write a warm, personalised 2-sentence health summary for their dashboard.
 
 Write only the summary — no labels or prefixes."""
 
-        summary = ollama_generate(prompt)
+        summary = generate_text(prompt)
         return jsonify({"summary": summary}), 200
 
     except Exception as e:
@@ -464,7 +438,7 @@ Instructions:
 
 Write only the explanation."""
 
-        explanation = ollama_generate(prompt)
+        explanation = generate_text(prompt)
         return jsonify({"explanation": explanation}), 200
 
     except Exception as e:
@@ -509,7 +483,7 @@ If no interactions found return safe true and empty interactions array.
 Return only valid JSON."""
 
         import json, re
-        text   = ollama_generate(prompt, temperature=0.1)
+        text   = generate_text(prompt, temperature=0.1)
         text   = re.sub(r'```json|```', '', text).strip()
         result = json.loads(text)
         return jsonify(result), 200
@@ -525,7 +499,8 @@ Return only valid JSON."""
 
 # ─────────────────────────────────────────
 # GET /api/ai/patient-summary/:patient_id
-# Uses Gemini — doctor-facing, quality matters
+# Provider selected via AI_PROVIDER env var (see ai_client.py) — Ollama
+# locally, Gemini in the deployed environment
 # ─────────────────────────────────────────
 @ai_bp.route("/ai/patient-summary/<int:patient_id>", methods=["GET"])
 @token_required
@@ -569,7 +544,7 @@ Line 3: Visit frequency and any notable concerns
 
 Be concise and clinical. If certain data is not available, skip that part."""
 
-        summary = ollama_generate(prompt)
+        summary = generate_text(prompt)
         return jsonify({"summary": summary}), 200
 
     except Exception as e:
@@ -619,7 +594,7 @@ Rules:
 - Return ONLY the JSON object, nothing else"""
 
     try:
-        raw = ollama_generate(prompt, temperature=0.1)
+        raw = generate_text(prompt, temperature=0.1)
 
         import json, re
         clean = re.sub(r'```json|```', '', raw).strip()
@@ -724,4 +699,89 @@ Rules:
             "medications":  [],
             "fhir_written": {"diagnoses": [], "medications": []},
             "message":      "Could not parse note automatically. Please add diagnoses and medications manually."
+        }), 200
+
+
+# ─────────────────────────────────────────
+# POST /api/ai/suggest-specialty
+# Patient describes symptoms in plain language, AI suggests which
+# specialty (from the doctors actually on the platform) fits best.
+# ─────────────────────────────────────────
+@ai_bp.route("/ai/suggest-specialty", methods=["POST"])
+@token_required
+@role_required(["patient"])
+def suggest_specialty():
+    data     = request.json
+    symptoms = (data.get("symptoms") or "").strip()
+
+    if not symptoms:
+        return jsonify({"error": "Please describe your symptoms"}), 400
+
+    conn = get_db()
+    cur  = conn.cursor()
+    try:
+        # Canonical list from the specialties table, not just whatever
+        # values happen to already be on a doctor row — guarantees the
+        # AI can never suggest a specialty that isn't a real, active one.
+        cur.execute("SELECT name FROM specialties WHERE is_active ORDER BY name")
+        specialties = [r[0] for r in cur.fetchall()]
+    finally:
+        cur.close()
+        conn.close()
+
+    if not specialties:
+        return jsonify({"specialty": None, "reason": "No specialties available right now."}), 200
+
+    specialty_list = ", ".join(specialties)
+    fallback_specialty = next((s for s in specialties if s.lower() == "general medicine"), specialties[0])
+
+    prompt = f"""A patient describes their symptoms below. You must pick exactly one
+specialty from this list — no other specialty exists on this platform:
+{specialty_list}
+
+Patient's symptoms: {symptoms}
+
+Rules:
+- Always pick one specialty from the list above, even if the match is only
+  approximate. If truly nothing fits well, pick "{fallback_specialty}" as a
+  safe general first opinion.
+- Never invent a specialty that isn't in the list.
+- Do not diagnose.
+
+Respond with ONLY valid JSON, no markdown, no extra text, in this exact shape:
+{{"specialty": "<one specialty name from the list above, exactly as written>", "reason": "<one short, friendly sentence explaining why>"}}"""
+
+    try:
+        raw = generate_text(prompt, temperature=0.2)
+
+        import json, re
+        clean = re.sub(r'```json|```', '', raw).strip()
+        match = re.search(r'\{.*\}', clean, re.DOTALL)
+        parsed = json.loads(match.group()) if match else {}
+
+        picked = str(parsed.get("specialty") or "").strip()
+        reason = str(parsed.get("reason") or "").strip()
+
+        # Exact match first, then a loose substring match either direction
+        # (covers minor model drift like "General Medicine Physician")
+        matched = next((s for s in specialties if s.lower() == picked.lower()), None)
+        if not matched and picked:
+            matched = next(
+                (s for s in specialties if s.lower() in picked.lower() or picked.lower() in s.lower()),
+                None
+            )
+        # The model ignored the JSON instruction entirely — fall back to
+        # scanning the raw text for any known specialty name before giving up.
+        if not matched:
+            matched = next((s for s in specialties if s.lower() in raw.lower()), None)
+        if not matched:
+            matched = fallback_specialty
+
+        return jsonify({"specialty": matched, "reason": reason or raw.strip()[:200]}), 200
+
+    except Exception as e:
+        print(f"Suggest-specialty error: {e}")
+        return jsonify({
+            "specialty": fallback_specialty,
+            "reason":    "Unable to fully analyze your symptoms right now, so we've pointed you to a general doctor as a safe first opinion."
         }), 200

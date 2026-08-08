@@ -238,3 +238,44 @@ def get_my_fhir():
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+
+# ─────────────────────────────────────────
+# GET /api/patients/me/referrals
+# ─────────────────────────────────────────
+@patients_bp.route("/patients/me/referrals", methods=["GET"])
+@token_required
+@role_required(["patient"])
+def get_my_referrals():
+    patient_id = request.user.get("patient_id")
+    conn = get_db()
+    cur  = conn.cursor()
+    try:
+        cur.execute("""
+            SELECT r.referral_id,
+                   rd.first_name || ' ' || rd.last_name AS referring_doctor_name,
+                   td.first_name || ' ' || td.last_name AS referred_to_doctor_name,
+                   td.doctor_id, td.specialization,
+                   r.reason, r.status, r.created_at, r.decline_reason
+            FROM referrals r
+            JOIN doctors rd ON r.referring_doctor_id = rd.doctor_id
+            JOIN doctors td ON r.referred_to_doctor_id = td.doctor_id
+            WHERE r.patient_id = %s
+            ORDER BY r.created_at DESC
+        """, (patient_id,))
+        return jsonify([{
+            "referral_id":                r[0],
+            "referring_doctor_name":      r[1],
+            "referred_to_doctor_name":    r[2],
+            "referred_to_doctor_id":      r[3],
+            "referred_to_specialization": r[4],
+            "reason":                     r[5],
+            "status":                     r[6],
+            "created_at":                 str(r[7]),
+            "decline_reason":             r[8]
+        } for r in cur.fetchall()]), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    finally:
+        cur.close()
+        conn.close()

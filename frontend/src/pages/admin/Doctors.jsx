@@ -1,40 +1,65 @@
 import { useState, useEffect } from "react";
+import { useNavigate } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import AdminLayout from "../../components/AdminLayout";
 import PageWrapper from "../../components/shared/PageWrapper";
 import { SkeletonTable } from "../../components/shared/SkeletonCard";
-import { getAdminDoctors, createDoctor } from "../../api/api";
+import EmptyState from "../../components/shared/EmptyState";
+import Modal from "../../components/shared/Modal";
+import { getAdminDoctors, createDoctor, getSpecialties, createSpecialty } from "../../api/api";
 import { showSuccess, showError } from "../../components/shared/Toast";
 import {
   UserPlus, Stethoscope, Plus,
-  X, CheckCircle, Loader2,
-  Mail, Phone, Award
+  CheckCircle, Loader2,
+  Mail, Phone, Award, ChevronRight
 } from "lucide-react";
 
-const SPECIALIZATIONS = [
-  "General Medicine", "Cardiology", "Neurology",
-  "Orthopedics", "Pediatrics", "Dermatology",
-  "Gynecology", "Oncology", "Psychiatry",
-  "Radiology", "Anesthesiology", "Emergency Medicine"
-];
-
 export default function AdminDoctors() {
+  const navigate = useNavigate();
   const [doctors,   setDoctors]   = useState([]);
+  const [specialties, setSpecialties] = useState([]);
   const [loading,   setLoading]   = useState(true);
   const [showForm,  setShowForm]  = useState(false);
   const [saving,    setSaving]    = useState(false);
+  const [showNewSpecialty, setShowNewSpecialty] = useState(false);
+  const [newSpecialty, setNewSpecialty] = useState("");
+  const [addingSpecialty, setAddingSpecialty] = useState(false);
   const [form, setForm] = useState({
     first_name: "", last_name: "", email: "",
     password: "", specialization: "", license_number: "", phone: ""
   });
 
-  useEffect(() => { loadDoctors(); }, []);
+  useEffect(() => { loadDoctors(); loadSpecialties(); }, []);
 
   const loadDoctors = () => {
     getAdminDoctors()
       .then(res => setDoctors(res.data))
       .catch(() => showError("Failed to load doctors"))
       .finally(() => setLoading(false));
+  };
+
+  const loadSpecialties = () => {
+    getSpecialties()
+      .then(res => setSpecialties(res.data))
+      .catch(() => showError("Failed to load specialties"));
+  };
+
+  const handleAddSpecialty = async () => {
+    const name = newSpecialty.trim();
+    if (!name) return;
+    setAddingSpecialty(true);
+    try {
+      await createSpecialty({ name });
+      showSuccess(`"${name}" added to specialties`);
+      setNewSpecialty("");
+      setShowNewSpecialty(false);
+      loadSpecialties();
+      f("specialization", name);
+    } catch (err) {
+      showError(err.response?.data?.error || "Failed to add specialty");
+    } finally {
+      setAddingSpecialty(false);
+    }
   };
 
   const handleCreate = async (e) => {
@@ -84,26 +109,8 @@ export default function AdminDoctors() {
         {/* Create doctor modal */}
         <AnimatePresence>
           {showForm && (
-            <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 px-4">
-              <motion.div
-                initial={{ opacity: 0, scale: 0.95 }}
-                animate={{ opacity: 1, scale: 1 }}
-                exit={{ opacity: 0, scale: 0.95 }}
-                className="bg-white rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden"
-              >
-                <div className="flex items-center justify-between p-6 border-b border-slate-100">
-                  <h3 className="font-semibold text-slate-800">
-                    Add New Doctor
-                  </h3>
-                  <button
-                    onClick={() => setShowForm(false)}
-                    className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-slate-100"
-                  >
-                    <X size={18} className="text-slate-400" />
-                  </button>
-                </div>
-
-                <form onSubmit={handleCreate} className="p-6 space-y-4">
+            <Modal title="Add New Doctor" onClose={() => setShowForm(false)} maxWidth="max-w-lg">
+                <form onSubmit={handleCreate} className="space-y-4">
 
                   <div className="grid grid-cols-2 gap-3">
                     <div>
@@ -161,9 +168,36 @@ export default function AdminDoctors() {
                   </div>
 
                   <div>
-                    <label className="block text-xs font-semibold text-slate-600 mb-1.5 uppercase tracking-wide">
-                      Specialization *
-                    </label>
+                    <div className="flex items-center justify-between mb-1.5">
+                      <label className="block text-xs font-semibold text-slate-600 uppercase tracking-wide">
+                        Specialization *
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() => setShowNewSpecialty(v => !v)}
+                        className="text-xs font-medium text-violet-600 hover:text-violet-700 flex items-center gap-0.5"
+                      >
+                        <Plus size={12} /> New
+                      </button>
+                    </div>
+                    {showNewSpecialty && (
+                      <div className="flex items-center gap-2 mb-2">
+                        <input
+                          placeholder="e.g. Endocrinology"
+                          value={newSpecialty}
+                          onChange={e => setNewSpecialty(e.target.value)}
+                          className="flex-1 px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-violet-500 bg-slate-50"
+                        />
+                        <button
+                          type="button"
+                          disabled={addingSpecialty}
+                          onClick={handleAddSpecialty}
+                          className="px-3 py-2 bg-violet-500 hover:bg-violet-600 disabled:opacity-50 text-white text-sm font-medium rounded-xl transition-colors"
+                        >
+                          {addingSpecialty ? <Loader2 size={14} className="animate-spin" /> : "Add"}
+                        </button>
+                      </div>
+                    )}
                     <select
                       required
                       value={form.specialization}
@@ -171,8 +205,8 @@ export default function AdminDoctors() {
                       className="w-full px-3 py-2.5 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-violet-500 bg-slate-50"
                     >
                       <option value="">Select specialization...</option>
-                      {SPECIALIZATIONS.map(s => (
-                        <option key={s} value={s}>{s}</option>
+                      {specialties.map(s => (
+                        <option key={s.specialty_id} value={s.name}>{s.name}</option>
                       ))}
                     </select>
                   </div>
@@ -215,8 +249,7 @@ export default function AdminDoctors() {
                     }
                   </button>
                 </form>
-              </motion.div>
-            </div>
+            </Modal>
           )}
         </AnimatePresence>
 
@@ -226,15 +259,11 @@ export default function AdminDoctors() {
             <h3 className="font-semibold text-slate-800">Doctor Accounts</h3>
           </div>
           {doctors.length === 0 ? (
-            <div className="p-12 text-center">
-              <Stethoscope className="text-slate-200 mx-auto mb-3" size={48} />
-              <p className="text-slate-400 text-sm font-medium">
-                No doctors yet
-              </p>
-              <p className="text-slate-300 text-xs mt-1">
-                Click "Add Doctor" to create the first doctor account
-              </p>
-            </div>
+            <EmptyState
+              icon={Stethoscope}
+              title="No doctors yet"
+              message='Click "Add Doctor" to create the first doctor account'
+            />
           ) : (
             <div className="divide-y divide-slate-50">
               {doctors.map((doc, i) => (
@@ -242,8 +271,11 @@ export default function AdminDoctors() {
                   key={doc.doctor_id}
                   initial={{ opacity: 0, x: -8 }}
                   animate={{ opacity: 1, x: 0 }}
-                  transition={{ delay: i * 0.05 }}
-                  className="flex items-center gap-4 p-4 hover:bg-slate-50 transition-colors"
+                  transition={{ delay: Math.min(i, 10) * 0.04 }}
+                  onClick={() => navigate(`/admin/doctors/${doc.doctor_id}`)}
+                  whileHover={{ y: -2 }}
+                  whileTap={{ scale: 0.98 }}
+                  className="flex items-center gap-4 p-4 hover:bg-slate-50 cursor-pointer transition-colors"
                 >
                   <div className="w-11 h-11 bg-gradient-to-br from-emerald-500 to-teal-400 rounded-full flex items-center justify-center flex-shrink-0 shadow">
                     <span className="text-white text-sm font-bold">
@@ -277,6 +309,7 @@ export default function AdminDoctors() {
                       Since {doc.created_at}
                     </p>
                   </div>
+                  <ChevronRight size={16} className="text-slate-300 flex-shrink-0" />
                 </motion.div>
               ))}
             </div>

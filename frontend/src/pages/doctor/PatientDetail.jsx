@@ -1,47 +1,28 @@
 import { useState, useEffect } from "react";
-import { useParams, useNavigate } from "react-router-dom";
+import { useParams, useNavigate, useSearchParams } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import DoctorLayout from "../../components/DoctorLayout";
+import PageWrapper from "../../components/shared/PageWrapper";
+import { SkeletonCard } from "../../components/shared/SkeletonCard";
+import EmptyState from "../../components/shared/EmptyState";
+import Modal from "../../components/shared/Modal";
 import {
   getDoctorPatient, saveVitals,
   getPatientSummaryAI, checkDrugInteractions,
   addDiagnosis, addMedication, addAllergy,
-  setBloodGroup, getBloodGroup
+  setBloodGroup, getBloodGroup,
+  getSpecialties, getDoctors, createReferral
 } from "../../api/api";
 import { showSuccess, showError } from "../../components/shared/Toast";
 import {
   ArrowLeft, FileText, Pill,
   Activity, AlertTriangle, Loader2,
   CheckCircle, AlertCircle, Plus,
-  X, Sparkles, ShieldAlert,
+  Sparkles, ShieldAlert,
   ChevronDown, ChevronUp, Calendar,
-  Heart, Wind, Thermometer, Droplets
+  Heart, Wind, Thermometer, Droplets, UserX, Share2,
+  Scale, Ruler, TestTube
 } from "lucide-react";
-
-// ── Modal wrapper ───────────────────────
-function Modal({ title, onClose, children }) {
-  return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 px-4">
-      <motion.div
-        initial={{ opacity: 0, scale: 0.95 }}
-        animate={{ opacity: 1, scale: 1 }}
-        exit={{ opacity: 0, scale: 0.95 }}
-        className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden"
-      >
-        <div className="flex items-center justify-between p-5 border-b border-slate-100">
-          <h3 className="font-semibold text-slate-800">{title}</h3>
-          <button
-            onClick={onClose}
-            className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-slate-100"
-          >
-            <X size={18} className="text-slate-400" />
-          </button>
-        </div>
-        <div className="p-5">{children}</div>
-      </motion.div>
-    </div>
-  );
-}
 
 // ── Vitals card ─────────────────────────
 function VitalCard({ icon: Icon, label, value, unit, color, bg }) {
@@ -55,9 +36,17 @@ function VitalCard({ icon: Icon, label, value, unit, color, bg }) {
   );
 }
 
+const BACK_TARGETS = {
+  schedule:  { to: "/doctor/schedule",  label: "Back to Schedule"  },
+  dashboard: { to: "/doctor",           label: "Back to Dashboard" },
+};
+
 export default function PatientDetail() {
   const { id }   = useParams();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const { to: backTarget, label: backLabel } =
+    BACK_TARGETS[searchParams.get("from")] || { to: "/doctor/patients", label: "Back to Patients" };
 
   // ── STATE ──────────────────────────────
   const [patient,        setPatient]        = useState(null);
@@ -66,7 +55,8 @@ export default function PatientDetail() {
   const [savingVitals,   setSavingVitals]   = useState(false);
   const [vitalsForm,     setVitalsForm]     = useState({
     heart_rate: "", systolic_bp: "", diastolic_bp: "",
-    temperature: "", respiratory_rate: "", oxygen_saturation: ""
+    temperature: "", respiratory_rate: "", oxygen_saturation: "",
+    weight: "", height: "", glucose: ""
   });
   const [aiSummary,      setAiSummary]      = useState("");
   const [loadingSummary, setLoadingSummary] = useState(false);
@@ -79,6 +69,7 @@ export default function PatientDetail() {
   const [showAddMedication, setShowAddMedication] = useState(false);
   const [showAddAllergy,    setShowAddAllergy]     = useState(false);
   const [showBloodGroup,    setShowBloodGroup]     = useState(false);
+  const [showReferral,      setShowReferral]       = useState(false);
 
   // Add forms
   const [diagnosisForm,  setDiagnosisForm]  = useState({ display: "", code: "" });
@@ -86,6 +77,12 @@ export default function PatientDetail() {
   const [allergyForm,    setAllergyForm]    = useState({ name: "", severity: "mild" });
   const [bloodGroupForm, setBloodGroupForm] = useState({ blood_group: "" });
   const [saving,         setSaving]         = useState(false);
+
+  // Referral
+  const [referralSpecialties, setReferralSpecialties] = useState([]);
+  const [referralDoctors,     setReferralDoctors]     = useState([]);
+  const [referralForm,        setReferralForm]        = useState({ specialty: "", referred_to_doctor_id: "", reason: "" });
+  const [savingReferral,      setSavingReferral]      = useState(false);
 
   // Blood group state
   const [bloodGroup,     setBloodGroup_]    = useState(null);
@@ -203,6 +200,40 @@ export default function PatientDetail() {
     }
   };
 
+  // ── REFERRAL ────────────────────────────
+  const openReferralModal = async () => {
+    setShowReferral(true);
+    if (referralSpecialties.length === 0) {
+      try {
+        const [sRes, dRes] = await Promise.all([getSpecialties(), getDoctors()]);
+        setReferralSpecialties(sRes.data);
+        setReferralDoctors(dRes.data);
+      } catch {
+        showError("Failed to load specialties/doctors for referral");
+      }
+    }
+  };
+
+  const handleCreateReferral = async () => {
+    if (!referralForm.referred_to_doctor_id || !referralForm.reason.trim()) {
+      showError("Select a doctor and enter a reason for the referral"); return;
+    }
+    setSavingReferral(true);
+    try {
+      await createReferral(id, {
+        referred_to_doctor_id: parseInt(referralForm.referred_to_doctor_id, 10),
+        reason: referralForm.reason
+      });
+      showSuccess("Referral created successfully.");
+      setShowReferral(false);
+      setReferralForm({ specialty: "", referred_to_doctor_id: "", reason: "" });
+    } catch (err) {
+      showError(err.response?.data?.error || "Failed to create referral");
+    } finally {
+      setSavingReferral(false);
+    }
+  };
+
   // ── BLOOD GROUP ────────────────────────
   const handleSaveBloodGroup = async () => {
     if (!bloodGroupForm.blood_group) {
@@ -277,31 +308,66 @@ export default function PatientDetail() {
     "Body temperature":         { icon: Thermometer, color: "text-orange-600", bg: "bg-orange-50", unit: "°C"   },
     "Respiratory rate":         { icon: Wind,        color: "text-sky-600",    bg: "bg-sky-50",    unit: "/min" },
     "Oxygen saturation":        { icon: Droplets,    color: "text-purple-600", bg: "bg-purple-50", unit: "%"    },
+    "Body weight":              { icon: Scale,       color: "text-teal-600",   bg: "bg-teal-50",   unit: "kg"   },
+    "Body height":              { icon: Ruler,       color: "text-indigo-600", bg: "bg-indigo-50", unit: "cm"   },
+    "Glucose":                  { icon: TestTube,    color: "text-amber-600",  bg: "bg-amber-50",  unit: "mg/dL"},
   };
 
   // ── LOADING ────────────────────────────
   if (loading) return (
     <DoctorLayout>
-      <div className="flex items-center justify-center h-64">
-        <Loader2 className="animate-spin text-emerald-500" size={32} />
+      <div className="h-4 w-32 bg-slate-100 rounded animate-pulse mb-6" />
+      <SkeletonCard />
+      <div className="grid grid-cols-2 gap-6 mt-4">
+        <SkeletonCard />
+        <SkeletonCard />
       </div>
     </DoctorLayout>
   );
 
-  return (
+  // ── NOT FOUND ──────────────────────────
+  if (!patient) return (
     <DoctorLayout>
+      <PageWrapper>
+        <button
+          onClick={() => navigate("/doctor/patients")}
+          className="flex items-center gap-2 text-slate-500 hover:text-slate-700 text-sm mb-6 transition-colors"
+        >
+          <ArrowLeft size={16} /> Back to Patients
+        </button>
+        <EmptyState
+          icon={UserX}
+          title="Patient not found"
+          message="This patient may have been removed, or the link is incorrect."
+          className="py-20"
+          action={
+            <button
+              onClick={() => navigate("/doctor/patients")}
+              className="px-4 py-2 bg-emerald-500 hover:bg-emerald-600 text-white text-xs font-medium rounded-xl transition-colors"
+            >
+              Back to Patients
+            </button>
+          }
+        />
+      </PageWrapper>
+    </DoctorLayout>
+  );
+
+  return (
+    <DoctorLayout title={`${patient.first_name} ${patient.last_name}`} subtitle="Full clinical view">
+      <PageWrapper>
 
       {/* Back */}
       <button
-        onClick={() => navigate("/doctor")}
+        onClick={() => navigate(backTarget)}
         className="flex items-center gap-2 text-slate-500 hover:text-slate-700 text-sm mb-6 transition-colors"
       >
-        <ArrowLeft size={16} /> Back to Patients
+        <ArrowLeft size={16} /> {backLabel}
       </button>
 
       {/* Patient header */}
       <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-6 mb-4">
-        <div className="flex items-center gap-5">
+        <div className="flex items-center gap-5 flex-wrap">
           <div className="w-16 h-16 bg-gradient-to-br from-emerald-500 to-teal-400 rounded-2xl flex items-center justify-center shadow-lg flex-shrink-0">
             <span className="text-white text-xl font-bold">
               {patient?.first_name?.[0]}{patient?.last_name?.[0]}
@@ -371,6 +437,12 @@ export default function PatientDetail() {
               className="flex items-center gap-2 px-3 py-2 bg-rose-500 hover:bg-rose-600 text-white text-sm font-medium rounded-xl transition-colors"
             >
               <Heart size={15} /> Blood Group
+            </button>
+            <button
+              onClick={openReferralModal}
+              className="flex items-center gap-2 px-3 py-2 bg-indigo-500 hover:bg-indigo-600 text-white text-sm font-medium rounded-xl transition-colors"
+            >
+              <Share2 size={15} /> Refer
             </button>
             <button
               onClick={() => navigate(`/doctor/notes?patient=${id}`)}
@@ -450,13 +522,13 @@ export default function PatientDetail() {
         </div>
 
         {latestVitals.length === 0 ? (
-          <div className="p-8 text-center">
-            <Activity className="text-slate-200 mx-auto mb-2" size={32} />
-            <p className="text-slate-400 text-sm">No vitals recorded yet</p>
-            <p className="text-slate-300 text-xs mt-1">
-              Click "Record Vitals" to add the first reading
-            </p>
-          </div>
+          <EmptyState
+            icon={Activity}
+            title="No vitals recorded yet"
+            message='Click "Record Vitals" to add the first reading'
+            className="py-8"
+            size={32}
+          />
         ) : (
           <div className="p-5">
             {/* Latest vitals as cards */}
@@ -559,10 +631,13 @@ export default function PatientDetail() {
           </div>
           <div className="divide-y divide-slate-50 max-h-52 overflow-y-auto">
             {patient?.fhir?.conditions?.length === 0 ? (
-              <div className="p-6 text-center">
-                <p className="text-slate-400 text-sm">No diagnoses recorded</p>
-                <p className="text-slate-300 text-xs mt-1">Click "Add" to record a diagnosis</p>
-              </div>
+              <EmptyState
+                icon={FileText}
+                title="No diagnoses recorded"
+                message='Click "Add" to record a diagnosis'
+                className="py-6"
+                size={28}
+              />
             ) : (
               patient?.fhir?.conditions?.map((c, i) => (
                 <div key={i} className="p-4">
@@ -598,10 +673,13 @@ export default function PatientDetail() {
           </div>
           <div className="divide-y divide-slate-50 max-h-52 overflow-y-auto">
             {patient?.fhir?.medications?.length === 0 ? (
-              <div className="p-6 text-center">
-                <p className="text-slate-400 text-sm">No medications recorded</p>
-                <p className="text-slate-300 text-xs mt-1">Click "Add" to prescribe a medication</p>
-              </div>
+              <EmptyState
+                icon={Pill}
+                title="No medications recorded"
+                message='Click "Add" to prescribe a medication'
+                className="py-6"
+                size={28}
+              />
             ) : (
               patient?.fhir?.medications?.map((m, i) => (
                 <div key={i} className="p-4 flex items-center justify-between">
@@ -697,10 +775,13 @@ export default function PatientDetail() {
           </div>
           <div className="divide-y divide-slate-50">
             {patient?.fhir?.allergies?.length === 0 ? (
-              <div className="p-6 text-center">
-                <p className="text-slate-400 text-sm">No allergies recorded</p>
-                <p className="text-slate-300 text-xs mt-1">Click "Add" to record an allergy</p>
-              </div>
+              <EmptyState
+                icon={AlertTriangle}
+                title="No allergies recorded"
+                message='Click "Add" to record an allergy'
+                className="py-6"
+                size={28}
+              />
             ) : (
               patient?.fhir?.allergies?.map((a, i) => (
                 <div key={i} className="p-4 flex items-center justify-between">
@@ -727,15 +808,20 @@ export default function PatientDetail() {
           </div>
           <div className="divide-y divide-slate-50">
             {patient?.notes?.length === 0 ? (
-              <div className="p-8 text-center">
-                <p className="text-slate-400 text-sm">No notes yet</p>
-                <button
-                  onClick={() => navigate(`/doctor/notes?patient=${id}`)}
-                  className="mt-3 px-4 py-2 bg-emerald-500 hover:bg-emerald-600 text-white text-xs font-medium rounded-xl transition-colors"
-                >
-                  Write First Note
-                </button>
-              </div>
+              <EmptyState
+                icon={FileText}
+                title="No notes yet"
+                className="py-8"
+                size={28}
+                action={
+                  <button
+                    onClick={() => navigate(`/doctor/notes?patient=${id}`)}
+                    className="px-4 py-2 bg-emerald-500 hover:bg-emerald-600 text-white text-xs font-medium rounded-xl transition-colors"
+                  >
+                    Write First Note
+                  </button>
+                }
+              />
             ) : (
               patient?.notes?.map(note => (
                 <div key={note.note_id} className="p-4">
@@ -746,6 +832,47 @@ export default function PatientDetail() {
                     <span className="text-xs text-slate-400">{note.created_at?.slice(0,10)}</span>
                   </div>
                   <p className="text-slate-700 text-sm leading-relaxed">{note.note_text}</p>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+
+        {/* Visit history */}
+        <div className="bg-white rounded-2xl border border-slate-100 shadow-sm col-span-2">
+          <div className="flex items-center gap-3 p-5 border-b border-slate-100">
+            <div className="w-8 h-8 bg-slate-100 rounded-lg flex items-center justify-center">
+              <Calendar size={16} className="text-slate-500" />
+            </div>
+            <h3 className="font-semibold text-slate-800">Visit History</h3>
+            <span className="text-xs text-slate-400 ml-auto">
+              {patient?.appointments?.length || 0} recent visits
+            </span>
+          </div>
+          <div className="divide-y divide-slate-50">
+            {patient?.appointments?.length === 0 ? (
+              <EmptyState
+                icon={Calendar}
+                title="No visits recorded"
+                className="py-8"
+                size={28}
+              />
+            ) : (
+              patient?.appointments?.map(appt => (
+                <div key={appt.appointment_id} className="p-4 flex items-center justify-between">
+                  <div>
+                    <p className="text-slate-800 text-sm font-medium">
+                      {appt.appointment_date?.slice(0, 10)}
+                    </p>
+                    <p className="text-slate-400 text-xs mt-0.5">{appt.reason}</p>
+                  </div>
+                  <span className={`text-xs px-2.5 py-0.5 rounded-full font-medium capitalize ${
+                    appt.status === "scheduled" ? "bg-blue-50 text-blue-600" :
+                    appt.status === "completed" ? "bg-green-50 text-green-600" :
+                    "bg-red-50 text-red-500"
+                  }`}>
+                    {appt.status}
+                  </span>
                 </div>
               ))
             )}
@@ -766,6 +893,9 @@ export default function PatientDetail() {
                   { key: "temperature",        label: "Temperature",      unit: "°C",   placeholder: "36.5-37.5" },
                   { key: "respiratory_rate",   label: "Respiratory Rate", unit: "/min", placeholder: "12-20"     },
                   { key: "oxygen_saturation",  label: "SpO2",             unit: "%",    placeholder: "95-100"    },
+                  { key: "weight",             label: "Weight",           unit: "kg",   placeholder: "50-90"     },
+                  { key: "height",             label: "Height",           unit: "cm",   placeholder: "150-190"   },
+                  { key: "glucose",            label: "Glucose",          unit: "mg/dL", placeholder: "70-140"   },
                 ].map(({ key, label, unit, placeholder }) => (
                   <div key={key}>
                     <label className="block text-xs font-semibold text-slate-600 mb-1 uppercase tracking-wide">
@@ -940,6 +1070,72 @@ export default function PatientDetail() {
         )}
       </AnimatePresence>
 
+      {/* ── REFER TO SPECIALIST MODAL ── */}
+      <AnimatePresence>
+        {showReferral && (
+          <Modal title="Refer to Specialist" onClose={() => setShowReferral(false)}>
+            <div className="space-y-3">
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 mb-1.5 uppercase tracking-wide">
+                  Specialty
+                </label>
+                <select
+                  value={referralForm.specialty}
+                  onChange={e => setReferralForm({ ...referralForm, specialty: e.target.value, referred_to_doctor_id: "" })}
+                  className="w-full px-3 py-2.5 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-slate-50"
+                >
+                  <option value="">All specialties</option>
+                  {referralSpecialties.map(s => (
+                    <option key={s.specialty_id} value={s.name}>{s.name}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 mb-1.5 uppercase tracking-wide">
+                  Doctor *
+                </label>
+                <select
+                  value={referralForm.referred_to_doctor_id}
+                  onChange={e => setReferralForm({ ...referralForm, referred_to_doctor_id: e.target.value })}
+                  className="w-full px-3 py-2.5 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-slate-50"
+                >
+                  <option value="">Select doctor...</option>
+                  {referralDoctors
+                    .filter(d => !referralForm.specialty || d.specialization === referralForm.specialty)
+                    .map(d => (
+                      <option key={d.doctor_id} value={d.doctor_id}>
+                        Dr. {d.first_name} {d.last_name} — {d.specialization}
+                      </option>
+                    ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 mb-1.5 uppercase tracking-wide">
+                  Reason for Referral *
+                </label>
+                <textarea
+                  rows={3}
+                  placeholder="e.g. Elevated BP on 3 consecutive visits, recommend cardiology workup"
+                  value={referralForm.reason}
+                  onChange={e => setReferralForm({ ...referralForm, reason: e.target.value })}
+                  className="w-full px-3 py-2.5 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-slate-50 resize-none"
+                />
+              </div>
+              <button
+                onClick={handleCreateReferral}
+                disabled={savingReferral}
+                className="w-full flex items-center justify-center gap-2 bg-indigo-500 hover:bg-indigo-600 disabled:opacity-50 text-white font-semibold py-2.5 rounded-xl transition-colors"
+              >
+                {savingReferral
+                  ? <><Loader2 size={16} className="animate-spin" /> Sending...</>
+                  : <><Share2 size={16} /> Send Referral</>
+                }
+              </button>
+            </div>
+          </Modal>
+        )}
+      </AnimatePresence>
+
       {/* ── Blood Group Modal ── */}
       <AnimatePresence>
         {showBloodGroup && (
@@ -988,6 +1184,7 @@ export default function PatientDetail() {
         )}
       </AnimatePresence>
 
+      </PageWrapper>
     </DoctorLayout>
   );
 }

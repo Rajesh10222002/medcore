@@ -28,6 +28,17 @@ def _next_weekday():
     return day.isoformat()
 
 
+def test_get_doctors_includes_patients_treated(client, patient_token, auth_header):
+    res = client.get("/api/doctors", headers=auth_header(patient_token))
+    assert res.status_code == 200
+    body = res.get_json()
+    assert isinstance(body, list) and len(body) > 0
+    for doc in body:
+        assert "patients_treated" in doc
+        assert isinstance(doc["patients_treated"], int)
+        assert doc["patients_treated"] >= 0
+
+
 def test_slots_endpoint_returns_structure(client, patient_token, auth_header, doctor_id):
     res = client.get(
         f"/api/appointments/slots?doctor_id={doctor_id}&date={_next_weekday()}",

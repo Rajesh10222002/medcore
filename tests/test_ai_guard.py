@@ -15,6 +15,7 @@ AI_ENDPOINTS = [
     ("GET",  "/api/ai/patient-summary/1"),
     ("POST", "/api/ai/parse-note"),
     ("POST", "/api/admin/nl-query"),
+    ("POST", "/api/ai/suggest-specialty"),
 ]
 
 
@@ -48,3 +49,14 @@ def test_nl_query_blocks_non_admin(client, doctor_token, patient_token, auth_hea
     for token in (doctor_token, patient_token):
         res = client.post("/api/admin/nl-query", json={"question": "how many patients?"}, headers=auth_header(token))
         assert res.status_code == 403
+
+
+def test_suggest_specialty_blocks_non_patient(client, doctor_token, admin_token, auth_header):
+    for token in (doctor_token, admin_token):
+        res = client.post("/api/ai/suggest-specialty", json={"symptoms": "cough"}, headers=auth_header(token))
+        assert res.status_code == 403
+
+
+def test_suggest_specialty_requires_symptoms(client, patient_token, auth_header):
+    res = client.post("/api/ai/suggest-specialty", json={}, headers=auth_header(patient_token))
+    assert res.status_code == 400

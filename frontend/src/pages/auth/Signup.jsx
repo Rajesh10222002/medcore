@@ -2,10 +2,12 @@ import { useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { useAuth } from "../../context/AuthContext";
 import { signup as signupAPI } from "../../api/api";
+import PageWrapper from "../../components/shared/PageWrapper";
+import { showError } from "../../components/shared/Toast";
 import {
   Heart, User, Mail, Lock,
   Phone, Calendar, ArrowRight,
-  AlertCircle, CheckCircle, Sparkles,
+  CheckCircle, Sparkles,
   Shield, Activity
 } from "lucide-react";
 
@@ -15,7 +17,6 @@ export default function Signup() {
     email: "", password: "",
     date_of_birth: "", gender: "", phone: ""
   });
-  const [error,   setError]   = useState("");
   const [loading, setLoading] = useState(false);
   const { login }             = useAuth();
   const navigate              = useNavigate();
@@ -25,18 +26,17 @@ export default function Signup() {
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (form.password.length < 8) {
-      setError("Password must be at least 8 characters");
+      showError("Password must be at least 8 characters");
       return;
     }
     setLoading(true);
-    setError("");
     try {
       const res = await signupAPI(form);
       const { token, name } = res.data;
       login({ name, role: "patient" }, token);
       navigate("/patient");
     } catch (err) {
-      setError(err.response?.data?.error || "Signup failed. Please try again.");
+      showError(err.response?.data?.error || "Signup failed. Please try again.");
     }
     setLoading(false);
   };
@@ -47,6 +47,7 @@ export default function Signup() {
     : "strong";
 
   return (
+    <PageWrapper>
     <div className="min-h-screen flex">
 
       {/* ── LEFT PANEL ── */}
@@ -254,6 +255,9 @@ export default function Signup() {
                   </span>
                 </div>
               )}
+              {pwStrength && pwStrength !== "strong" && (
+                <p className="text-red-500 text-xs mt-1.5">Must be at least 8 characters</p>
+              )}
             </div>
 
             {/* DOB + Gender */}
@@ -328,18 +332,10 @@ export default function Signup() {
               </p>
             </div>
 
-            {/* Error */}
-            {error && (
-              <div className="flex items-center gap-3 bg-red-50 border border-red-100 text-red-600 px-4 py-3 rounded-2xl text-sm">
-                <AlertCircle size={16} className="flex-shrink-0" />
-                {error}
-              </div>
-            )}
-
             {/* Submit */}
             <button
               type="submit"
-              disabled={loading}
+              disabled={loading || form.password.length > 0 && form.password.length < 8}
               className="w-full flex items-center justify-center gap-2 text-white font-semibold py-3.5 rounded-2xl transition-all duration-200 disabled:opacity-60 mt-1"
               style={{
                 background: "linear-gradient(135deg, #2176AE, #1A4A7A)",
@@ -373,5 +369,6 @@ export default function Signup() {
         </div>
       </div>
     </div>
+    </PageWrapper>
   );
 }

@@ -1,16 +1,21 @@
 import { useState, useEffect } from "react";
+import { useNavigate } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import DoctorLayout from "../../components/DoctorLayout";
+import PageWrapper from "../../components/shared/PageWrapper";
+import { SkeletonCard, SkeletonTable } from "../../components/shared/SkeletonCard";
+import EmptyState from "../../components/shared/EmptyState";
+import Modal from "../../components/shared/Modal";
 import {
   getScheduleCalendar, getScheduleLeaves,
   getDayDetail, addLeave, deleteLeave
 } from "../../api/api";
 import { showSuccess, showError } from "../../components/shared/Toast";
 import {
-  CalendarDays, Clock, X, Plus, Loader2,
+  CalendarDays, Clock, Plus, Loader2,
   CheckCircle, AlertCircle, Trash2,
   User, ChevronRight, CalendarOff,
-  Calendar, Stethoscope
+  Calendar, Stethoscope, Video, Building2
 } from "lucide-react";
 
 // ── Weekday label helper ──────────────────
@@ -105,6 +110,7 @@ export default function Schedule() {
   });
   const [saving,       setSaving]       = useState(false);
   const [deleting,     setDeleting]     = useState(null);
+  const navigate = useNavigate();
 
   useEffect(() => { loadAll(); }, []);
 
@@ -191,14 +197,25 @@ export default function Schedule() {
 
   if (loading) return (
     <DoctorLayout>
-      <div className="flex items-center justify-center h-64">
-        <Loader2 className="animate-spin text-emerald-500" size={32} />
+      <div className="mb-6">
+        <div className="h-7 w-40 bg-slate-200 rounded-lg animate-pulse mb-2" />
+        <div className="h-4 w-72 bg-slate-100 rounded-lg animate-pulse" />
+      </div>
+      <div className="grid grid-cols-3 gap-6">
+        <div className="col-span-2 space-y-4">
+          <SkeletonCard />
+          <SkeletonTable rows={3} />
+        </div>
+        <div className="col-span-1 space-y-4">
+          <SkeletonCard />
+        </div>
       </div>
     </DoctorLayout>
   );
 
   return (
     <DoctorLayout>
+      <PageWrapper>
 
       {/* Header */}
       <div className="flex items-center justify-between mb-6">
@@ -308,13 +325,13 @@ export default function Schedule() {
                       })}
                     </h3>
                     {selectedDay.full_day_leave && (
-                      <span className="px-2 py-0.5 rounded-full text-xs font-semibold"
+                      <span className="tint-badge px-2 py-0.5 rounded-full text-xs font-semibold"
                         style={{ background: "rgba(239,68,68,0.1)", color: "#dc2626" }}>
                         On Leave
                       </span>
                     )}
                     {selectedDay.date === today && (
-                      <span className="px-2 py-0.5 rounded-full text-xs font-semibold"
+                      <span className="tint-badge px-2 py-0.5 rounded-full text-xs font-semibold"
                         style={{ background: "rgba(16,185,129,0.1)", color: "#059669" }}>
                         Today
                       </span>
@@ -331,8 +348,8 @@ export default function Schedule() {
               </div>
 
               {loadingDay ? (
-                <div className="flex items-center justify-center py-10">
-                  <Loader2 className="animate-spin text-emerald-500" size={24} />
+                <div className="p-5">
+                  <SkeletonTable rows={2} />
                 </div>
               ) : (
                 <div>
@@ -375,14 +392,20 @@ export default function Schedule() {
 
                   {/* Appointments list */}
                   {dayDetail?.appointments?.length === 0 ? (
-                    <div className="py-10 text-center">
-                      <Calendar size={28} className="text-slate-200 mx-auto mb-2" />
-                      <p className="text-slate-400 text-sm">No appointments this day</p>
-                    </div>
+                    <EmptyState
+                      icon={Calendar}
+                      title="No appointments this day"
+                      className="py-10"
+                      size={28}
+                    />
                   ) : (
                     <div className="divide-y divide-slate-50">
                       {dayDetail?.appointments?.map((appt, i) => (
-                        <div key={appt.appointment_id} className="flex items-center gap-4 px-5 py-3.5">
+                        <div
+                          key={appt.appointment_id}
+                          onClick={() => navigate(`/doctor/patient/${appt.patient_id}?from=schedule`)}
+                          className="flex items-center gap-4 px-5 py-3.5 hover:bg-slate-50 cursor-pointer transition-colors"
+                        >
                           <div className="w-9 h-9 rounded-xl flex items-center justify-center text-white text-xs font-bold flex-shrink-0"
                             style={{ background: "linear-gradient(135deg, #059669, #047857)" }}>
                             {appt.patient_name?.split(" ").map(n => n[0]).join("").slice(0,2)}
@@ -391,6 +414,10 @@ export default function Schedule() {
                             <p className="text-slate-800 text-sm font-semibold">{appt.patient_name}</p>
                             <p className="text-slate-400 text-xs mt-0.5 truncate">"{appt.reason}"</p>
                           </div>
+                          {appt.appointment_type === "Video Consultation"
+                            ? <Video size={14} className="text-sky-400 flex-shrink-0" />
+                            : <Building2 size={14} className="text-slate-300 flex-shrink-0" />
+                          }
                           <div className="text-right flex-shrink-0">
                             <p className="text-slate-600 text-sm font-medium flex items-center gap-1 justify-end">
                               <Clock size={11} />
@@ -406,6 +433,7 @@ export default function Schedule() {
                               {appt.status}
                             </span>
                           </div>
+                          <ChevronRight size={16} className="text-slate-300 flex-shrink-0" />
                         </div>
                       ))}
                     </div>
@@ -460,11 +488,14 @@ export default function Schedule() {
               <p className="text-slate-400 text-xs mt-0.5">{leaves.length} scheduled</p>
             </div>
             {leaves.length === 0 ? (
-              <div className="py-10 text-center">
-                <CheckCircle size={24} className="text-emerald-300 mx-auto mb-2" />
-                <p className="text-slate-400 text-sm">No leaves scheduled</p>
-                <p className="text-slate-300 text-xs mt-1">You're available every day</p>
-              </div>
+              <EmptyState
+                icon={CheckCircle}
+                title="No leaves scheduled"
+                message="You're available every day"
+                className="py-10"
+                size={24}
+                iconClassName="text-emerald-300"
+              />
             ) : (
               <div className="divide-y divide-slate-50">
                 {leaves.map(leave => (
@@ -512,37 +543,25 @@ export default function Schedule() {
       {/* ── ADD LEAVE MODAL ── */}
       <AnimatePresence>
         {showAddModal && (
-          <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50 px-4">
-            <motion.div
-              initial={{ opacity: 0, scale: 0.95, y: 10 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.95 }}
-              className="bg-white rounded-3xl shadow-2xl w-full max-w-md overflow-hidden"
-            >
-              {/* Modal header */}
-              <div className="flex items-center justify-between px-6 py-5 border-b border-slate-100">
-                <div className="flex items-center gap-3">
-                  <div className={`w-9 h-9 rounded-xl flex items-center justify-center ${
-                    addType === "full_day" ? "bg-red-50" : "bg-amber-50"
-                  }`}>
-                    {addType === "full_day"
-                      ? <CalendarOff size={16} className="text-red-500" />
-                      : <Clock size={16} className="text-amber-500" />
-                    }
-                  </div>
-                  <h3 className="font-bold text-slate-800">
-                    {addType === "full_day" ? "Add Full Day Leave" : "Add Hourly Block"}
-                  </h3>
+          <Modal
+            onClose={() => setShowAddModal(false)}
+            title={
+              <>
+                <div className={`w-9 h-9 rounded-xl flex items-center justify-center ${
+                  addType === "full_day" ? "bg-red-50" : "bg-amber-50"
+                }`}>
+                  {addType === "full_day"
+                    ? <CalendarOff size={16} className="text-red-500" />
+                    : <Clock size={16} className="text-amber-500" />
+                  }
                 </div>
-                <button
-                  onClick={() => setShowAddModal(false)}
-                  className="w-8 h-8 flex items-center justify-center rounded-xl hover:bg-slate-100"
-                >
-                  <X size={17} className="text-slate-400" />
-                </button>
-              </div>
-
-              <div className="p-6 space-y-4">
+                <h3 className="font-bold text-slate-800">
+                  {addType === "full_day" ? "Add Full Day Leave" : "Add Hourly Block"}
+                </h3>
+              </>
+            }
+          >
+              <div className="space-y-4">
 
                 {/* Type toggle */}
                 <div className="flex gap-2 p-1 bg-slate-100 rounded-xl">
@@ -663,11 +682,11 @@ export default function Schedule() {
                   }
                 </button>
               </div>
-            </motion.div>
-          </div>
+          </Modal>
         )}
       </AnimatePresence>
 
+      </PageWrapper>
     </DoctorLayout>
   );
 }

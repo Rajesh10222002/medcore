@@ -1,8 +1,13 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import AdminLayout from "../../components/AdminLayout";
 import PageWrapper from "../../components/shared/PageWrapper";
-import { SkeletonCard } from "../../components/shared/SkeletonCard";
+import { SkeletonCard, SkeletonTable } from "../../components/shared/SkeletonCard";
+import EmptyState from "../../components/shared/EmptyState";
+import Pagination from "../../components/shared/Pagination";
+import AnimatedNumber from "../../components/shared/AnimatedNumber";
+import { showError } from "../../components/shared/Toast";
 import { getAdminAppointments } from "../../api/api";
 import {
   Calendar, Search, Clock,
@@ -10,23 +15,7 @@ import {
   CheckCircle, XCircle
 } from "lucide-react";
 
-// Animated counter
-function AnimatedNumber({ value }) {
-  const [display, setDisplay] = useState(0);
-  useEffect(() => {
-    let start = 0;
-    const end  = parseInt(value) || 0;
-    if (start === end) return;
-    const step  = Math.max(1, Math.floor(end / 20));
-    const timer = setInterval(() => {
-      start = Math.min(start + step, end);
-      setDisplay(start);
-      if (start >= end) clearInterval(timer);
-    }, 50);
-    return () => clearInterval(timer);
-  }, [value]);
-  return <span>{display}</span>;
-}
+const PER_PAGE = 20;
 
 function StatusBadge({ status }) {
   const map = {
@@ -44,70 +33,62 @@ function StatusBadge({ status }) {
 }
 
 export default function AdminAppointments() {
+  const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
+
   const [appointments, setAppointments] = useState([]);
-  const [filtered,     setFiltered]     = useState([]);
-  const [loading,      setLoading]      = useState(true);
-  const [search,       setSearch]       = useState("");
-  const [statusFilter, setStatusFilter] = useState("all");
+  const [total,        setTotal]        = useState(0);
+  const [stats,        setStats]        = useState(null);
+  const [loading,       setLoading]       = useState(true);
+  const [search,       setSearch]       = useState(searchParams.get("search") || "");
+  const [statusFilter, setStatusFilter] = useState(searchParams.get("status") || "all");
+  const [page,         setPage]         = useState(parseInt(searchParams.get("page")) || 1);
+
+  const skipReset = useRef(true);
 
   useEffect(() => {
-    getAdminAppointments()
-      .then(res => { setAppointments(res.data); setFiltered(res.data); })
-      .catch(err => console.error(err))
-      .finally(() => setLoading(false));
-  }, []);
+    if (skipReset.current) { skipReset.current = false; return; }
+    setPage(1);
+  }, [search, statusFilter]);
 
   useEffect(() => {
-    let result = appointments;
-    if (statusFilter !== "all") {
-      result = result.filter(a => a.status === statusFilter);
-    }
-    if (search.trim()) {
-      const q = search.toLowerCase();
-      result = result.filter(a =>
-        a.patient_name?.toLowerCase().includes(q) ||
-        a.doctor_name?.toLowerCase().includes(q) ||
-        a.reason?.toLowerCase().includes(q) ||
-        a.specialization?.toLowerCase().includes(q)
-      );
-    }
-    setFiltered(result);
-  }, [search, statusFilter, appointments]);
+    const params = {};
+    if (search) params.search = search;
+    if (statusFilter !== "all") params.status = statusFilter;
+    if (page > 1) params.page = String(page);
+    setSearchParams(params, { replace: true });
+  }, [search, statusFilter, page]);
 
-  if (loading) return (
+  useEffect(() => {
+    setLoading(true);
+    const t = setTimeout(() => {
+      getAdminAppointments({ page, per_page: PER_PAGE, search, status: statusFilter })
+        .then(res => {
+          setAppointments(res.data.items);
+          setTotal(res.data.total);
+          setStats(res.data.stats);
+        })
+        .catch(() => showError("Failed to load appointments"))
+        .finally(() => setLoading(false));
+    }, 300);
+    return () => clearTimeout(t);
+  }, [page, search, statusFilter]);
+
+  if (loading && appointments.length === 0) return (
     <AdminLayout>
       <div className="mb-6">
         <div className="h-7 w-52 bg-slate-200 rounded-lg animate-pulse mb-2" />
         <div className="h-4 w-36 bg-slate-100 rounded-lg animate-pulse" />
       </div>
-      <div className="grid grid-cols-4 gap-4 mb-6">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
         {[...Array(4)].map((_, i) => <SkeletonCard key={i} />)}
       </div>
-      <div className="bg-white rounded-2xl border border-slate-100 p-6">
-        {[...Array(5)].map((_, i) => (
-          <div key={i} className="flex items-center gap-4 py-3 border-b border-slate-50 last:border-0">
-            <div className="w-10 h-10 bg-slate-100 rounded-xl animate-pulse flex-shrink-0" />
-            <div className="flex-1 space-y-2">
-              <div className="h-3 bg-slate-100 rounded w-48 animate-pulse" />
-              <div className="h-3 bg-slate-50 rounded w-72 animate-pulse" />
-            </div>
-          </div>
-        ))}
-      </div>
+      <SkeletonTable rows={5} />
     </AdminLayout>
   );
 
-  const scheduled = appointments.filter(a => a.status === "scheduled").length;
-  const completed = appointments.filter(a => a.status === "completed").length;
-  const cancelled = appointments.filter(a => a.status === "cancelled").length;
-  const today     = appointments.filter(a => {
-    const d = new Date(a.appointment_date);
-    const n = new Date();
-    return d.toDateString() === n.toDateString();
-  }).length;
-
-  const cancelRate = appointments.length > 0
-    ? Math.round((cancelled / appointments.length) * 100)
+  const cancelRate = stats?.total > 0
+    ? Math.round((stats.cancelled / stats.total) * 100)
     : 0;
 
   return (
@@ -119,43 +100,45 @@ export default function AdminAppointments() {
           <div>
             <h1 className="text-2xl font-bold text-slate-800">All Appointments</h1>
             <p className="text-slate-500 text-sm mt-1">
-              {appointments.length} total · {cancelRate}% cancellation rate
+              {stats?.total ?? 0} total · {cancelRate}% cancellation rate
             </p>
           </div>
         </div>
 
         {/* Stat cards */}
-        <div className="grid grid-cols-4 gap-4 mb-6">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
           {[
             {
-              icon: Calendar, label: "Total",     value: appointments.length,
+              key: "all", icon: Calendar, label: "Total",     value: stats?.total,
               gradient: "linear-gradient(135deg, #f5f3ff, #ede9fe)",
-              iconBg: "rgba(124,58,237,0.12)", iconColor: "text-violet-600", delay: 0.05
+              iconBg: "rgba(124,58,237,0.12)", iconColor: "text-violet-600", dot: "#7c3aed", delay: 0.05
             },
             {
-              icon: Clock, label: "Scheduled", value: scheduled,
+              key: "scheduled", icon: Clock, label: "Scheduled", value: stats?.scheduled,
               gradient: "linear-gradient(135deg, #eff6ff, #dbeafe)",
-              iconBg: "rgba(59,130,246,0.12)", iconColor: "text-blue-600", delay: 0.1
+              iconBg: "rgba(59,130,246,0.12)", iconColor: "text-blue-600", dot: "#2563eb", delay: 0.1
             },
             {
-              icon: CheckCircle, label: "Completed", value: completed,
+              key: "completed", icon: CheckCircle, label: "Completed", value: stats?.completed,
               gradient: "linear-gradient(135deg, #f0fdf4, #dcfce7)",
-              iconBg: "rgba(16,185,129,0.12)", iconColor: "text-emerald-600", delay: 0.15
+              iconBg: "rgba(16,185,129,0.12)", iconColor: "text-emerald-600", dot: "#059669", delay: 0.15
             },
             {
-              icon: XCircle, label: "Cancelled",  value: cancelled,
+              key: "cancelled", icon: XCircle, label: "Cancelled",  value: stats?.cancelled,
               gradient: "linear-gradient(135deg, #fff1f2, #ffe4e6)",
-              iconBg: "rgba(239,68,68,0.1)", iconColor: "text-red-500", delay: 0.2
+              iconBg: "rgba(239,68,68,0.1)", iconColor: "text-red-500", dot: "#dc2626", delay: 0.2
             },
-          ].map(({ icon: Icon, label, value, gradient, iconBg, iconColor, delay }) => (
+          ].map(({ key, icon: Icon, label, value, gradient, iconBg, iconColor, dot, delay }) => (
             <motion.div
               key={label}
               initial={{ opacity: 0, y: 16 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay }}
-              className="relative rounded-2xl p-5 overflow-hidden cursor-pointer"
+              whileHover={{ y: -2 }}
+              whileTap={{ scale: 0.98 }}
+              className="relative rounded-2xl p-5 overflow-hidden cursor-pointer stat-gradient-card"
               style={{ background: gradient, boxShadow: "0 2px 12px rgba(0,0,0,0.05)" }}
-              onClick={() => setStatusFilter(label.toLowerCase() === "total" ? "all" : label.toLowerCase())}
+              onClick={() => setStatusFilter(key)}
             >
               <div className="absolute top-0 right-0 w-16 h-16 rounded-full blur-2xl opacity-30"
                 style={{ background: iconBg }} />
@@ -167,20 +150,17 @@ export default function AdminAppointments() {
                 </div>
               </div>
               <p className="relative text-3xl font-bold text-slate-800">
-                <AnimatedNumber value={value} />
+                <AnimatedNumber value={value || 0} />
               </p>
-              {statusFilter === label.toLowerCase() && (
-                <div className="absolute bottom-0 left-0 right-0 h-0.5"
-                  style={{ background: iconColor.replace("text-", "") === "violet-600" ? "#7c3aed"
-                    : iconColor === "text-blue-600" ? "#2563eb"
-                    : iconColor === "text-emerald-600" ? "#059669" : "#dc2626" }} />
+              {statusFilter === key && (
+                <div className="absolute bottom-0 left-0 right-0 h-0.5" style={{ background: dot }} />
               )}
             </motion.div>
           ))}
         </div>
 
         {/* Search + filter */}
-        <div className="flex items-center gap-3 mb-5">
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 mb-5">
           <div className="relative flex-1">
             <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={15} />
             <input
@@ -210,10 +190,10 @@ export default function AdminAppointments() {
               <button
                 key={key}
                 onClick={() => setStatusFilter(key)}
-                className="px-3 py-2 rounded-xl text-xs font-semibold transition-all"
+                className={`px-3 py-2 rounded-xl text-xs font-semibold transition-all ${statusFilter === key ? "" : "bg-white"}`}
                 style={statusFilter === key
                   ? { background: "rgba(124,58,237,0.12)", color: "#7c3aed", border: "1px solid rgba(124,58,237,0.25)" }
-                  : { background: "white", color: "#94a3b8", border: "1px solid #e2e8f0" }
+                  : { color: "#94a3b8", border: "1px solid #e2e8f0" }
                 }
               >
                 {label}
@@ -227,7 +207,7 @@ export default function AdminAppointments() {
           <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between">
             <div>
               <h3 className="font-bold text-slate-800">Appointment Records</h3>
-              <p className="text-slate-400 text-xs mt-0.5">{filtered.length} shown</p>
+              <p className="text-slate-400 text-xs mt-0.5">{total} matching</p>
             </div>
             {(search || statusFilter !== "all") && (
               <button
@@ -239,24 +219,23 @@ export default function AdminAppointments() {
             )}
           </div>
 
-          {filtered.length === 0 ? (
-            <div className="py-16 text-center">
-              <div className="w-14 h-14 mx-auto mb-4 rounded-2xl flex items-center justify-center"
-                style={{ background: "rgba(124,58,237,0.05)", border: "1px dashed rgba(124,58,237,0.2)" }}>
-                <Calendar size={24} className="text-slate-300" />
-              </div>
-              <p className="text-slate-500 text-sm font-medium">No appointments found</p>
-              <p className="text-slate-400 text-xs mt-1">Try adjusting your search or filter</p>
-            </div>
+          {appointments.length === 0 ? (
+            <EmptyState
+              variant="dashed"
+              icon={Calendar}
+              title="No appointments found"
+              message="Try adjusting your search or filter"
+              className="py-16"
+            />
           ) : (
             <div className="divide-y divide-slate-50">
               <AnimatePresence>
-                {filtered.map((appt, i) => (
+                {appointments.map((appt, i) => (
                   <motion.div
                     key={appt.appointment_id}
                     initial={{ opacity: 0, x: -8 }}
                     animate={{ opacity: 1, x: 0 }}
-                    transition={{ delay: i * 0.02 }}
+                    transition={{ delay: Math.min(i, 10) * 0.04 }}
                     className="flex items-center gap-4 px-5 py-4 hover:bg-slate-50/70 transition-colors"
                   >
                     {/* Date badge */}
@@ -273,15 +252,23 @@ export default function AdminAppointments() {
                     {/* Info */}
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 flex-wrap">
-                        <span className="text-slate-800 text-sm font-bold flex items-center gap-1">
+                        <motion.button
+                          whileTap={{ scale: 0.95 }}
+                          onClick={() => navigate(`/admin/patients/${appt.patient_id}`)}
+                          className="text-slate-800 text-sm font-bold flex items-center gap-1 hover:text-violet-600 transition-colors"
+                        >
                           <User size={12} className="text-slate-400" />
                           {appt.patient_name}
-                        </span>
+                        </motion.button>
                         <span className="text-slate-300 text-xs">→</span>
-                        <span className="text-slate-600 text-sm font-medium flex items-center gap-1">
+                        <motion.button
+                          whileTap={{ scale: 0.95 }}
+                          onClick={() => navigate(`/admin/doctors/${appt.doctor_id}`)}
+                          className="text-slate-600 text-sm font-medium flex items-center gap-1 hover:text-violet-600 transition-colors"
+                        >
                           <Stethoscope size={12} className="text-slate-400" />
                           Dr. {appt.doctor_name}
-                        </span>
+                        </motion.button>
                         <StatusBadge status={appt.status} />
                       </div>
                       <div className="flex items-center gap-3 mt-1">
@@ -313,6 +300,8 @@ export default function AdminAppointments() {
               </AnimatePresence>
             </div>
           )}
+
+          <Pagination page={page} perPage={PER_PAGE} total={total} onChange={setPage} />
         </div>
 
       </PageWrapper>

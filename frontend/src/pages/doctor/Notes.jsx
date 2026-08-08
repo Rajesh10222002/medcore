@@ -1,6 +1,8 @@
 import { useState, useEffect } from "react";
 import { useSearchParams } from "react-router-dom";
 import DoctorLayout from "../../components/DoctorLayout";
+import PageWrapper from "../../components/shared/PageWrapper";
+import { SkeletonCard } from "../../components/shared/SkeletonCard";
 import { getDoctorPatients, saveClinicalNote, parseNote } from "../../api/api";
 import {
   FileText, Save, Loader2,
@@ -41,8 +43,8 @@ export default function Notes() {
   const [parseError,  setParseError] = useState("");
 
   useEffect(() => {
-    getDoctorPatients()
-      .then(res => setPatients(res.data))
+    getDoctorPatients({ per_page: 500 })
+      .then(res => setPatients(res.data.items))
       .catch(() => showError("Failed to load patients"))
       .finally(() => setLoading(false));
   }, []);
@@ -91,8 +93,27 @@ export default function Notes() {
     p => p.patient_id === parseInt(patientId)
   );
 
+  if (loading) return (
+    <DoctorLayout>
+      <div className="mb-6">
+        <div className="h-7 w-40 bg-slate-200 rounded-lg animate-pulse mb-2" />
+        <div className="h-4 w-72 bg-slate-100 rounded-lg animate-pulse" />
+      </div>
+      <div className="grid grid-cols-3 gap-6">
+        <div className="col-span-2 space-y-4">
+          <SkeletonCard />
+          <SkeletonCard />
+        </div>
+        <div className="col-span-1 space-y-4">
+          <SkeletonCard />
+        </div>
+      </div>
+    </DoctorLayout>
+  );
+
   return (
     <DoctorLayout>
+      <PageWrapper>
 
       {/* Page header */}
       <div className="mb-6">
@@ -352,6 +373,7 @@ Plan: Amoxicillin 500mg TDS x 7 days, Paracetamol 650mg SOS, review in 5 days."
 
         </div>
       </div>
+      </PageWrapper>
     </DoctorLayout>
   );
 }

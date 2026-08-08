@@ -1,37 +1,22 @@
 import { useState, useEffect } from "react";
+import { useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
 import AdminLayout from "../../components/AdminLayout";
 import PageWrapper from "../../components/shared/PageWrapper";
 import { SkeletonCard } from "../../components/shared/SkeletonCard";
+import AnimatedNumber from "../../components/shared/AnimatedNumber";
+import { showError } from "../../components/shared/Toast";
 import { getAdminKPIs, adminNLQuery } from "../../api/api";
 import {
   Users, UserPlus, Calendar,
   TrendingUp, CheckCircle, XCircle,
   Clock, Stethoscope, ArrowUp,
-  Sparkles, Send, Loader2
+  Sparkles, Send, Loader2, Share2, Video, Building2
 } from "lucide-react";
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip,
   PieChart, Pie, Cell, ResponsiveContainer
 } from "recharts";
-
-// Animated counter
-function AnimatedNumber({ value }) {
-  const [display, setDisplay] = useState(0);
-  useEffect(() => {
-    let start = 0;
-    const end  = parseInt(value) || 0;
-    if (start === end) return;
-    const step  = Math.max(1, Math.floor(end / 20));
-    const timer = setInterval(() => {
-      start = Math.min(start + step, end);
-      setDisplay(start);
-      if (start >= end) clearInterval(timer);
-    }, 50);
-    return () => clearInterval(timer);
-  }, [value]);
-  return <span>{display}</span>;
-}
 
 // Gradient KPI card
 function KpiCard({ icon: Icon, label, value, gradient, iconBg, iconColor, trend, delay = 0 }) {
@@ -40,7 +25,7 @@ function KpiCard({ icon: Icon, label, value, gradient, iconBg, iconColor, trend,
       initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ delay }}
-      className="relative rounded-2xl p-5 overflow-hidden"
+      className="relative rounded-2xl p-5 overflow-hidden stat-gradient-card"
       style={{ background: gradient, boxShadow: "0 2px 16px rgba(0,0,0,0.06)" }}
     >
       <div className="absolute top-0 right-0 w-20 h-20 rounded-full blur-2xl opacity-30"
@@ -85,6 +70,7 @@ const STATUS_COLORS = {
 };
 
 export default function AdminDashboard() {
+  const navigate = useNavigate();
   const [kpis,      setKpis]      = useState(null);
   const [loading,   setLoading]   = useState(true);
   const [nlQuery,   setNlQuery]   = useState("");
@@ -95,7 +81,7 @@ export default function AdminDashboard() {
   useEffect(() => {
     getAdminKPIs()
       .then(res => setKpis(res.data))
-      .catch(err => console.error(err))
+      .catch(() => showError("Failed to load dashboard data"))
       .finally(() => setLoading(false));
   }, []);
 
@@ -118,7 +104,7 @@ export default function AdminDashboard() {
 
   if (loading) return (
     <AdminLayout>
-      <div className="grid grid-cols-4 gap-4 mb-6">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
         {[...Array(4)].map((_, i) => <SkeletonCard key={i} />)}
       </div>
     </AdminLayout>
@@ -145,43 +131,44 @@ export default function AdminDashboard() {
         </div>
 
         {/* ── Row 1: Main KPI cards ── */}
-        <div className="grid grid-cols-4 gap-4 mb-5">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-5">
           <KpiCard
             icon={Users}      label="Total Patients"       value={kpis?.total_patients}
             gradient="linear-gradient(135deg, #eff6ff, #dbeafe)"
-            iconBg="rgba(59,130,246,0.12)"  iconColor="text-blue-600"   delay={0.05}
+            iconBg="rgba(59,130,246,0.12)"  iconColor="text-blue-600"   delay={0.03}
             trend="Registered"
           />
           <KpiCard
             icon={Stethoscope} label="Total Doctors"       value={kpis?.total_doctors}
             gradient="linear-gradient(135deg, #f0fdf4, #dcfce7)"
-            iconBg="rgba(16,185,129,0.12)" iconColor="text-emerald-600" delay={0.1}
+            iconBg="rgba(16,185,129,0.12)" iconColor="text-emerald-600" delay={0.06}
           />
           <KpiCard
             icon={Calendar}   label="Total Appointments"   value={kpis?.total_appointments}
             gradient="linear-gradient(135deg, #f5f3ff, #ede9fe)"
-            iconBg="rgba(124,58,237,0.12)" iconColor="text-violet-600"  delay={0.15}
+            iconBg="rgba(124,58,237,0.12)" iconColor="text-violet-600"  delay={0.09}
           />
           <KpiCard
             icon={TrendingUp} label="New Patients (Month)" value={kpis?.new_this_month}
             gradient="linear-gradient(135deg, #fffbeb, #fef3c7)"
-            iconBg="rgba(245,158,11,0.12)" iconColor="text-amber-500"   delay={0.2}
+            iconBg="rgba(245,158,11,0.12)" iconColor="text-amber-500"   delay={0.12}
             trend="This month"
           />
         </div>
 
         {/* ── Row 2: Today's stats ── */}
-        <div className="grid grid-cols-3 gap-4 mb-6">
+        <div className="grid grid-cols-1 sm:grid-cols-4 gap-4 mb-6">
           {[
             { icon: Clock,       label: "Today's Appointments", value: kpis?.today_appointments, bg: "rgba(59,130,246,0.08)",   color: "text-blue-600",   border: "rgba(59,130,246,0.15)"   },
             { icon: CheckCircle, label: "Scheduled",            value: kpis?.scheduled,          bg: "rgba(16,185,129,0.08)",  color: "text-emerald-600", border: "rgba(16,185,129,0.15)"  },
             { icon: XCircle,     label: "Cancelled",            value: kpis?.cancelled,          bg: "rgba(239,68,68,0.08)",   color: "text-red-500",     border: "rgba(239,68,68,0.15)"   },
-          ].map(({ icon: Icon, label, value, bg, color, border }, i) => (
+            { icon: Share2,      label: "Referrals This Month", value: kpis?.referrals_this_month, bg: "rgba(99,102,241,0.08)", color: "text-indigo-500", border: "rgba(99,102,241,0.15)", sub: kpis?.most_referred_specialty ? `Most to: ${kpis.most_referred_specialty}` : null },
+          ].map(({ icon: Icon, label, value, bg, color, border, sub }, i) => (
             <motion.div
               key={label}
               initial={{ opacity: 0, y: 12 }}
               animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: 0.25 + i * 0.05 }}
+              transition={{ delay: 0.15 + i * 0.03 }}
               className="bg-white rounded-2xl p-5 flex items-center gap-4 border shadow-sm"
               style={{ borderColor: border }}
             >
@@ -194,20 +181,21 @@ export default function AdminDashboard() {
                 <p className="text-2xl font-bold text-slate-800 mt-0.5">
                   <AnimatedNumber value={value || 0} />
                 </p>
+                {sub && <p className="text-slate-400 text-xs mt-0.5 truncate">{sub}</p>}
               </div>
             </motion.div>
           ))}
         </div>
 
         {/* ── Row 3: Charts ── */}
-        <div className="grid grid-cols-3 gap-6 mb-6">
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
 
           {/* Bar chart */}
           <motion.div
             initial={{ opacity: 0, y: 16 }}
             animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.3 }}
-            className="col-span-2 bg-white rounded-2xl border border-slate-100 shadow-sm p-5"
+            transition={{ delay: 0.2 }}
+            className="lg:col-span-2 bg-white rounded-2xl border border-slate-100 shadow-sm p-5"
           >
             <div className="flex items-center justify-between mb-5">
               <div>
@@ -259,7 +247,7 @@ export default function AdminDashboard() {
           <motion.div
             initial={{ opacity: 0, y: 16 }}
             animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.35 }}
+            transition={{ delay: 0.23 }}
             className="bg-white rounded-2xl border border-slate-100 shadow-sm p-5"
           >
             <div className="mb-5">
@@ -310,11 +298,41 @@ export default function AdminDashboard() {
           </motion.div>
         </div>
 
+        {/* ── Row 3b: Consultation mode split ── */}
+        {kpis?.by_appointment_type?.length > 0 && (
+          <motion.div
+            initial={{ opacity: 0, y: 16 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.24 }}
+            className="bg-white rounded-2xl border border-slate-100 shadow-sm p-5 mb-6"
+          >
+            <h3 className="font-bold text-slate-800 mb-4">Consultation Mode</h3>
+            <div className="flex items-center gap-6">
+              {kpis.by_appointment_type.map(t => {
+                const total = kpis.by_appointment_type.reduce((s, x) => s + x.count, 0);
+                const pct = total > 0 ? Math.round((t.count / total) * 100) : 0;
+                return (
+                  <div key={t.type} className="flex items-center gap-2.5">
+                    {t.type === "Video Consultation"
+                      ? <Video size={16} className="text-sky-500" />
+                      : <Building2 size={16} className="text-slate-400" />
+                    }
+                    <div>
+                      <p className="text-slate-800 text-sm font-bold">{t.count} <span className="text-slate-400 font-normal text-xs">({pct}%)</span></p>
+                      <p className="text-slate-400 text-xs">{t.type}</p>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </motion.div>
+        )}
+
         {/* ── Row 4: Top Doctors ── */}
         <motion.div
           initial={{ opacity: 0, y: 16 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.4 }}
+          transition={{ delay: 0.26 }}
           className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden"
         >
           <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between">
@@ -333,7 +351,13 @@ export default function AdminDashboard() {
                 const max = kpis.top_doctors[0]?.total || 1;
                 const pct = Math.round((doc.total / max) * 100);
                 return (
-                  <div key={i} className="flex items-center gap-4 px-5 py-4 hover:bg-slate-50 transition-colors">
+                  <motion.div
+                    key={i}
+                    onClick={() => navigate(`/admin/doctors/${doc.doctor_id}`)}
+                    whileHover={{ y: -2 }}
+                    whileTap={{ scale: 0.98 }}
+                    className="flex items-center gap-4 px-5 py-4 hover:bg-slate-50 cursor-pointer transition-colors"
+                  >
                     {/* Rank */}
                     <div className="w-8 h-8 rounded-xl flex items-center justify-center flex-shrink-0 text-xs font-bold"
                       style={{
@@ -362,7 +386,7 @@ export default function AdminDashboard() {
                       <p className="text-slate-800 text-lg font-bold">{doc.total}</p>
                       <p className="text-slate-400 text-xs">appointments</p>
                     </div>
-                  </div>
+                  </motion.div>
                 );
               })}
             </div>
@@ -373,7 +397,7 @@ export default function AdminDashboard() {
         <motion.div
           initial={{ opacity: 0, y: 16 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.5 }}
+          transition={{ delay: 0.3 }}
           className="rounded-2xl overflow-hidden"
           style={{
             background: "linear-gradient(135deg, #12062a 0%, #1a0938 100%)",

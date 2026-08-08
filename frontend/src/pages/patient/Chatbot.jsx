@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from "react";
 import PatientLayout from "../../components/PatientLayout";
+import PageWrapper from "../../components/shared/PageWrapper";
 import { chat, getSuggestedQuestions } from "../../api/api";
 import {
   Send, Bot, User,
@@ -90,6 +91,7 @@ export default function Chatbot() {
 
   return (
     <PatientLayout>
+      <PageWrapper>
 
       {/* Page header */}
       <div className="mb-6">
@@ -239,6 +241,7 @@ export default function Chatbot() {
 
         </div>
       </div>
+      </PageWrapper>
     </PatientLayout>
   );
 }

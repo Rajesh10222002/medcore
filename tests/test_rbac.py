@@ -51,3 +51,13 @@ def test_admin_blocked_from_patient_appointments(client, admin_token, auth_heade
 def test_doctor_blocked_from_booking_appointment(client, doctor_token, auth_header):
     res = client.post("/api/appointments", json={}, headers=auth_header(doctor_token))
     assert res.status_code in (401, 403)
+
+
+def test_doctor_blocked_from_admin_patient_detail(client, doctor_token, auth_header):
+    res = client.get("/api/admin/patients/1", headers=auth_header(doctor_token))
+    assert res.status_code in (401, 403)
+
+
+def test_patient_blocked_from_admin_doctor_detail(client, patient_token, auth_header):
+    res = client.get("/api/admin/doctors/1", headers=auth_header(patient_token))
+    assert res.status_code in (401, 403)

@@ -4,6 +4,9 @@ import { motion } from "framer-motion";
 import PatientLayout from "../../components/PatientLayout";
 import PageWrapper from "../../components/shared/PageWrapper";
 import { SkeletonCard, SkeletonTable } from "../../components/shared/SkeletonCard";
+import EmptyState from "../../components/shared/EmptyState";
+import AnimatedNumber from "../../components/shared/AnimatedNumber";
+import { showError } from "../../components/shared/Toast";
 import { getMyProfile, getMyAppointments, getHealthSummaryAI, getMyFHIR } from "../../api/api";
 import {
   Activity, Calendar, FileText,
@@ -12,24 +15,6 @@ import {
   RefreshCw, ArrowRight, User,
   Mail, Phone, CheckCircle
 } from "lucide-react";
-
-// ── Animated counter ─────────────────────────────────────
-function AnimatedNumber({ value }) {
-  const [display, setDisplay] = useState(0);
-  useEffect(() => {
-    let start = 0;
-    const end = parseInt(value);
-    if (isNaN(end) || start === end) return;
-    const step  = Math.max(1, Math.floor(end / 20));
-    const timer = setInterval(() => {
-      start = Math.min(start + step, end);
-      setDisplay(start);
-      if (start >= end) clearInterval(timer);
-    }, 50);
-    return () => clearInterval(timer);
-  }, [value]);
-  return <span>{display}</span>;
-}
 
 // ── Status badge ──────────────────────────────────────────
 function StatusBadge({ status }) {
@@ -73,7 +58,7 @@ function StatCard({ icon: Icon, label, value, gradient, iconBg, iconColor, delay
       initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.4, delay }}
-      className="relative rounded-2xl p-5 overflow-hidden"
+      className="relative rounded-2xl p-5 overflow-hidden stat-gradient-card"
       style={{ background: gradient, boxShadow: "0 2px 16px rgba(0,0,0,0.06)" }}
     >
       {/* Subtle inner glow top-right */}
@@ -131,7 +116,7 @@ export default function Dashboard() {
       setProfile(pRes.data);
       setAppointments(aRes.data);
     } catch (err) {
-      console.error(err);
+      showError("Failed to load dashboard data");
     } finally {
       setLoading(false);
     }
@@ -183,7 +168,7 @@ export default function Dashboard() {
         <div className="h-7 w-48 bg-slate-200 rounded-lg animate-pulse mb-2" />
         <div className="h-4 w-64 bg-slate-100 rounded-lg animate-pulse" />
       </div>
-      <div className="grid grid-cols-4 gap-4 mb-6">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
         {[...Array(4)].map((_, i) => <SkeletonCard key={i} />)}
       </div>
       <SkeletonTable rows={4} />
@@ -316,7 +301,7 @@ export default function Dashboard() {
         </motion.div>
 
         {/* ── Stats row ── */}
-        <div className="grid grid-cols-4 gap-4 mb-6">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
           <StatCard
             icon={Calendar}  label="Upcoming"     value={upcoming.length}
             gradient="linear-gradient(135deg, #eff6ff, #dbeafe)"
@@ -340,7 +325,7 @@ export default function Dashboard() {
         </div>
 
         {/* ── Main content grid ── */}
-        <div className="grid grid-cols-3 gap-6">
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
 
           {/* ── LEFT: Profile + Quick Actions ── */}
           <motion.div
@@ -447,7 +432,7 @@ export default function Dashboard() {
             initial={{ opacity: 0, x: 16 }}
             animate={{ opacity: 1, x: 0 }}
             transition={{ delay: 0.22 }}
-            className="col-span-2 space-y-4"
+            className="lg:col-span-2 space-y-4"
           >
             {/* Upcoming appointments card */}
             <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden">
@@ -466,22 +451,23 @@ export default function Dashboard() {
               </div>
 
               {upcoming.length === 0 ? (
-                <div className="py-14 text-center">
-                  <div className="w-16 h-16 mx-auto mb-4 rounded-2xl flex items-center justify-center"
-                    style={{ background: "rgba(33,118,174,0.06)", border: "1px dashed rgba(33,118,174,0.15)" }}>
-                    <Calendar size={26} className="text-slate-300" />
-                  </div>
-                  <p className="text-slate-500 text-sm font-medium">No upcoming appointments</p>
-                  <p className="text-slate-400 text-xs mt-1 mb-4">Book one to see your doctor</p>
-                  <button
-                    onClick={() => navigate("/patient/appointments")}
-                    className="inline-flex items-center gap-2 px-5 py-2.5 text-white text-sm font-semibold rounded-xl shadow-md hover:shadow-lg transition-all"
-                    style={{ background: "linear-gradient(135deg, #2176AE, #1A4A7A)" }}
-                  >
-                    <Calendar size={14} />
-                    Book Appointment
-                  </button>
-                </div>
+                <EmptyState
+                  variant="dashed"
+                  icon={Calendar}
+                  title="No upcoming appointments"
+                  message="Book one to see your doctor"
+                  className="py-14"
+                  action={
+                    <button
+                      onClick={() => navigate("/patient/appointments")}
+                      className="inline-flex items-center gap-2 px-5 py-2.5 text-white text-sm font-semibold rounded-xl shadow-md hover:shadow-lg transition-all"
+                      style={{ background: "linear-gradient(135deg, #2176AE, #1A4A7A)" }}
+                    >
+                      <Calendar size={14} />
+                      Book Appointment
+                    </button>
+                  }
+                />
               ) : (
                 <div className="divide-y divide-slate-50">
                   {upcoming.slice(0, 4).map((appt, i) => (

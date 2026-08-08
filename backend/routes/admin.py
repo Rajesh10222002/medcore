@@ -1,6 +1,7 @@
 from flask import Blueprint, jsonify, request
 from db import get_db
 from middleware.auth import token_required, role_required
+from ai_client import generate_text
 import bcrypt
 import requests as http_req
 import os
@@ -93,7 +94,8 @@ def get_kpis():
         cur.execute("""
             SELECT d.first_name || ' ' || d.last_name as name,
                    d.specialization,
-                   COUNT(a.appointment_id) as total
+                   COUNT(a.appointment_id) as total,
+                   d.doctor_id
             FROM doctors d
             LEFT JOIN appointments a ON d.doctor_id = a.doctor_id
             GROUP BY d.doctor_id, d.first_name, d.last_name, d.specialization
@@ -101,9 +103,37 @@ def get_kpis():
             LIMIT 5
         """)
         top_doctors = [
-            {"name": r[0], "specialization": r[1], "total": r[2]}
+            {"name": r[0], "specialization": r[1], "total": r[2], "doctor_id": r[3]}
             for r in cur.fetchall()
         ]
+
+        # Referrals this month
+        cur.execute("""
+            SELECT COUNT(*) FROM referrals
+            WHERE DATE_TRUNC('month', created_at) = DATE_TRUNC('month', CURRENT_DATE)
+        """)
+        referrals_this_month = cur.fetchone()[0]
+
+        # Most-referred-to specialty
+        cur.execute("""
+            SELECT d.specialization, COUNT(*) as total
+            FROM referrals r
+            JOIN doctors d ON r.referred_to_doctor_id = d.doctor_id
+            GROUP BY d.specialization
+            ORDER BY total DESC
+            LIMIT 1
+        """)
+        top_row = cur.fetchone()
+        most_referred_specialty = top_row[0] if top_row else None
+
+        # Video vs in-person split
+        cur.execute("""
+            SELECT COALESCE(t.name, 'In-Person'), COUNT(*)
+            FROM appointments a
+            LEFT JOIN appointment_types t ON a.type_id = t.type_id
+            GROUP BY COALESCE(t.name, 'In-Person')
+        """)
+        by_appt_type = [{"type": r[0], "count": r[1]} for r in cur.fetchall()]
 
         return jsonify({
             "total_patients":    total_patients,
@@ -115,7 +145,10 @@ def get_kpis():
             "new_this_month":     new_this_month,
             "daily_appointments": daily_appts,
             "by_status":          by_status,
-            "top_doctors":        top_doctors
+            "top_doctors":        top_doctors,
+            "referrals_this_month":    referrals_this_month,
+            "most_referred_specialty": most_referred_specialty,
+            "by_appointment_type":     by_appt_type
         }), 200
 
     except Exception as e:
@@ -133,10 +166,29 @@ def get_kpis():
 @token_required
 @role_required(["admin"])
 def get_all_patients():
+    page     = max(1, int(request.args.get("page", 1)))
+    per_page = max(1, int(request.args.get("per_page", 20)))
+    search   = request.args.get("search", "").strip()
+    gender   = request.args.get("gender", "").strip().lower()
+
+    where, params = [], []
+    if search:
+        like = f"%{search}%"
+        where.append("(p.first_name ILIKE %s OR p.last_name ILIKE %s OR p.email ILIKE %s OR p.phone ILIKE %s)")
+        params.extend([like, like, like, like])
+    if gender and gender != "all":
+        where.append("LOWER(p.gender) = %s")
+        params.append(gender)
+    where_clause = f"WHERE {' AND '.join(where)}" if where else ""
+
     conn = get_db()
     cur  = conn.cursor()
     try:
-        cur.execute("""
+        cur.execute(f"SELECT COUNT(*) FROM patients p {where_clause}", params)
+        total = cur.fetchone()[0]
+
+        offset = (page - 1) * per_page
+        cur.execute(f"""
             SELECT
                 p.patient_id,
                 p.first_name,
@@ -149,11 +201,13 @@ def get_all_patients():
                 COUNT(a.appointment_id) as total_appointments
             FROM patients p
             LEFT JOIN appointments a ON p.patient_id = a.patient_id
+            {where_clause}
             GROUP BY p.patient_id, p.first_name, p.last_name,
                      p.date_of_birth, p.gender, p.phone,
                      p.email, p.created_at
             ORDER BY p.created_at DESC
-        """)
+            LIMIT %s OFFSET %s
+        """, params + [per_page, offset])
         rows = cur.fetchall()
         patients = []
         for r in rows:
@@ -177,7 +231,211 @@ def get_all_patients():
                 "created_at":          str(r[7])[:10],
                 "total_appointments":  r[8]
             })
-        return jsonify(patients), 200
+
+        # Unfiltered aggregate stats for the stat cards — independent of
+        # the current search/gender filter, always reflect the full dataset.
+        cur.execute("SELECT COUNT(*) FROM patients")
+        total_patients = cur.fetchone()[0]
+        cur.execute("SELECT COUNT(*) FROM patients WHERE LOWER(gender) = 'male'")
+        male_count = cur.fetchone()[0]
+        cur.execute("SELECT COUNT(*) FROM patients WHERE LOWER(gender) = 'female'")
+        female_count = cur.fetchone()[0]
+        cur.execute("""
+            SELECT COUNT(*) FROM patients
+            WHERE DATE_TRUNC('month', created_at) = DATE_TRUNC('month', CURRENT_DATE)
+        """)
+        new_this_month = cur.fetchone()[0]
+
+        return jsonify({
+            "items":    patients,
+            "total":    total,
+            "page":     page,
+            "per_page": per_page,
+            "stats": {
+                "total":          total_patients,
+                "male":           male_count,
+                "female":         female_count,
+                "new_this_month": new_this_month
+            }
+        }), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    finally:
+        cur.close()
+        conn.close()
+
+
+# ─────────────────────────────────────────
+# GET /api/admin/patients/:id
+# Full clinical record for one patient (read-only)
+# ─────────────────────────────────────────
+@admin_bp.route("/admin/patients/<int:patient_id>", methods=["GET"])
+@token_required
+@role_required(["admin"])
+def get_admin_patient_detail(patient_id):
+    conn = get_db()
+    cur  = conn.cursor()
+    try:
+        cur.execute("""
+            SELECT patient_id, first_name, last_name,
+                   date_of_birth, gender, phone, email, fhir_id
+            FROM patients WHERE patient_id = %s
+        """, (patient_id,))
+        row = cur.fetchone()
+        if not row:
+            return jsonify({"error": "Patient not found"}), 404
+
+        dob = row[3]
+        if dob:
+            today = date.today()
+            age   = today.year - dob.year - (
+                (today.month, today.day) < (dob.month, dob.day)
+            )
+        else:
+            age = 0
+
+        patient = {
+            "patient_id":    row[0],
+            "first_name":    row[1],
+            "last_name":     row[2],
+            "date_of_birth": str(row[3]),
+            "age":           age,
+            "gender":        row[4],
+            "phone":         row[5],
+            "email":         row[6],
+            "fhir_id":       row[7]
+        }
+
+        cur.execute("""
+            SELECT appointment_id, appointment_date,
+                   status, reason, no_show_risk
+            FROM appointments
+            WHERE patient_id = %s
+            ORDER BY appointment_date DESC
+            LIMIT 10
+        """, (patient_id,))
+        appts = cur.fetchall()
+        patient["appointments"] = [{
+            "appointment_id":   a[0],
+            "appointment_date": str(a[1]),
+            "status":           a[2],
+            "reason":           a[3],
+            "no_show_risk":     float(a[4]) if a[4] else None
+        } for a in appts]
+
+        cur.execute("""
+            SELECT note_id, note_text, note_type, created_at
+            FROM clinical_notes
+            WHERE patient_id = %s
+            ORDER BY created_at DESC
+            LIMIT 5
+        """, (patient_id,))
+        notes = cur.fetchall()
+        patient["notes"] = [{
+            "note_id":    n[0],
+            "note_text":  n[1],
+            "note_type":  n[2],
+            "created_at": str(n[3])
+        } for n in notes]
+
+        fhir_id = row[7]
+        patient["fhir"] = {
+            "conditions":   [],
+            "medications":  [],
+            "observations": [],
+            "allergies":    []
+        }
+
+        if fhir_id:
+            try:
+                def fetch(resource_type, param=None):
+                    if param:
+                        url = f"{FHIR_URL}/{resource_type}?{param}={fhir_id}&_count=50"
+                    else:
+                        url = f"{FHIR_URL}/{resource_type}?subject=Patient/{fhir_id}&_count=50"
+                    r = http_req.get(
+                        url,
+                        headers={"Accept": "application/fhir+json"},
+                        timeout=10
+                    )
+                    if r.status_code == 200:
+                        return r.json().get("entry", [])
+                    return []
+
+                condition_entries   = fetch("Condition")
+                medication_entries  = fetch("MedicationRequest")
+                observation_entries = fetch("Observation")
+                allergy_entries     = fetch("AllergyIntolerance", "patient")
+
+                for entry in condition_entries:
+                    res  = entry.get("resource", {})
+                    code = res.get("code", {})
+                    patient["fhir"]["conditions"].append({
+                        "display": code.get("text") or
+                                   code.get("coding", [{}])[0].get("display", "Unknown"),
+                        "code":    code.get("coding", [{}])[0].get("code", ""),
+                        "date":    res.get("recordedDate", "")
+                    })
+
+                for entry in medication_entries:
+                    res = entry.get("resource", {})
+                    med = res.get("medicationCodeableConcept", {})
+                    patient["fhir"]["medications"].append({
+                        "name":   med.get("text") or
+                                  med.get("coding", [{}])[0].get("display", "Unknown"),
+                        "status": res.get("status", ""),
+                        "date":   res.get("authoredOn", "")
+                    })
+
+                all_obs = []
+                for entry in observation_entries:
+                    res   = entry.get("resource", {})
+                    code  = res.get("code", {})
+                    value = res.get("valueQuantity", {})
+                    date_ = res.get("effectiveDateTime", "")
+                    name  = code.get("text") or \
+                            code.get("coding", [{}])[0].get("display", "Unknown")
+
+                    codings = code.get("coding", [])
+                    is_blood_group = (
+                        name.lower() in ["blood group", "abo and rh group"] or
+                        any(c.get("code") == "882-1" for c in codings)
+                    )
+                    if is_blood_group:
+                        continue
+                    if not value.get("value"):
+                        continue
+
+                    all_obs.append({
+                        "name":  name,
+                        "value": str(value.get("value", "")),
+                        "unit":  value.get("unit", ""),
+                        "date":  date_
+                    })
+
+                all_obs.sort(key=lambda x: x.get("date", ""), reverse=True)
+                seen_vitals = set()
+                for obs in all_obs:
+                    key = obs["name"].lower().strip()
+                    if key not in seen_vitals:
+                        seen_vitals.add(key)
+                        patient["fhir"]["observations"].append(obs)
+
+                for entry in allergy_entries:
+                    res  = entry.get("resource", {})
+                    code = res.get("code", {})
+                    patient["fhir"]["allergies"].append({
+                        "name":     code.get("text") or
+                                    code.get("coding", [{}])[0].get("display", "Unknown"),
+                        "severity": res.get("reaction", [{}])[0]
+                                        .get("severity", "unknown")
+                    })
+
+            except Exception as fe:
+                print(f"FHIR error: {fe}")
+
+        return jsonify(patient), 200
+
     except Exception as e:
         return jsonify({"error": str(e)}), 500
     finally:
@@ -226,6 +484,100 @@ def get_all_doctors():
             "created_at":         str(r[7])[:10],
             "total_appointments": r[8]
         } for r in rows]), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    finally:
+        cur.close()
+        conn.close()
+
+
+# ─────────────────────────────────────────
+# GET /api/admin/doctors/:id
+# Doctor profile + schedule + appointment history (read-only)
+# ─────────────────────────────────────────
+@admin_bp.route("/admin/doctors/<int:doctor_id>", methods=["GET"])
+@token_required
+@role_required(["admin"])
+def get_admin_doctor_detail(doctor_id):
+    conn = get_db()
+    cur  = conn.cursor()
+    try:
+        cur.execute("""
+            SELECT doctor_id, first_name, last_name, specialization,
+                   license_number, phone, email, fhir_id, created_at
+            FROM doctors WHERE doctor_id = %s
+        """, (doctor_id,))
+        row = cur.fetchone()
+        if not row:
+            return jsonify({"error": "Doctor not found"}), 404
+
+        doctor = {
+            "doctor_id":      row[0],
+            "first_name":     row[1],
+            "last_name":      row[2],
+            "specialization": row[3],
+            "license_number": row[4],
+            "phone":          row[5],
+            "email":          row[6],
+            "fhir_id":        row[7],
+            "created_at":     str(row[8])[:10]
+        }
+
+        cur.execute("""
+            SELECT day_of_week, start_time, end_time, slot_duration
+            FROM doctor_schedules
+            WHERE doctor_id = %s
+            ORDER BY day_of_week
+        """, (doctor_id,))
+        doctor["schedule"] = [{
+            "day_of_week":   r[0],
+            "start_time":    str(r[1]),
+            "end_time":      str(r[2]),
+            "slot_duration": r[3]
+        } for r in cur.fetchall()]
+
+        cur.execute("""
+            SELECT COUNT(*),
+                   SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END),
+                   SUM(CASE WHEN status = 'scheduled' THEN 1 ELSE 0 END),
+                   SUM(CASE WHEN status = 'cancelled' THEN 1 ELSE 0 END)
+            FROM appointments WHERE doctor_id = %s
+        """, (doctor_id,))
+        s = cur.fetchone()
+        doctor["stats"] = {
+            "total":     s[0] or 0,
+            "completed": s[1] or 0,
+            "scheduled": s[2] or 0,
+            "cancelled": s[3] or 0
+        }
+
+        cur.execute("""
+            SELECT a.appointment_id, a.appointment_date, a.status, a.reason,
+                   p.first_name || ' ' || p.last_name AS patient_name, a.patient_id
+            FROM appointments a
+            JOIN patients p ON a.patient_id = p.patient_id
+            WHERE a.doctor_id = %s
+            ORDER BY a.appointment_date DESC
+            LIMIT 10
+        """, (doctor_id,))
+        doctor["recent_appointments"] = [{
+            "appointment_id":   r[0],
+            "appointment_date": str(r[1]),
+            "status":           r[2],
+            "reason":           r[3],
+            "patient_name":     r[4],
+            "patient_id":       r[5]
+        } for r in cur.fetchall()]
+
+        cur.execute("""
+            SELECT AVG(rating), COUNT(*)
+            FROM patient_feedback WHERE doctor_id = %s
+        """, (doctor_id,))
+        avg_rating, feedback_count = cur.fetchone()
+        doctor["avg_rating"]     = round(float(avg_rating), 1) if avg_rating else None
+        doctor["feedback_count"] = feedback_count or 0
+
+        return jsonify(doctor), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 500
     finally:
@@ -348,16 +700,47 @@ def create_doctor():
 @token_required
 @role_required(["admin"])
 def get_all_appointments():
+    page     = max(1, int(request.args.get("page", 1)))
+    per_page = max(1, int(request.args.get("per_page", 20)))
+    search   = request.args.get("search", "").strip()
+    status   = request.args.get("status", "").strip().lower()
+
+    where, params = [], []
+    if status and status != "all":
+        where.append("a.status = %s")
+        params.append(status)
+    if search:
+        like = f"%{search}%"
+        where.append("""(
+            p.first_name ILIKE %s OR p.last_name ILIKE %s OR
+            d.first_name ILIKE %s OR d.last_name ILIKE %s OR
+            a.reason ILIKE %s OR d.specialization ILIKE %s
+        )""")
+        params.extend([like, like, like, like, like, like])
+    where_clause = f"WHERE {' AND '.join(where)}" if where else ""
+
     conn = get_db()
     cur  = conn.cursor()
     try:
-        cur.execute("""
+        cur.execute(f"""
+            SELECT COUNT(*)
+            FROM appointments a
+            JOIN patients p ON a.patient_id = p.patient_id
+            JOIN doctors  d ON a.doctor_id  = d.doctor_id
+            {where_clause}
+        """, params)
+        total = cur.fetchone()[0]
+
+        offset = (page - 1) * per_page
+        cur.execute(f"""
             SELECT
                 a.appointment_id,
                 a.appointment_date,
                 a.status,
                 a.reason,
                 a.no_show_risk,
+                a.patient_id,
+                a.doctor_id,
                 p.first_name || ' ' || p.last_name as patient_name,
                 p.email as patient_email,
                 d.first_name || ' ' || d.last_name as doctor_name,
@@ -365,20 +748,48 @@ def get_all_appointments():
             FROM appointments a
             JOIN patients p ON a.patient_id = p.patient_id
             JOIN doctors  d ON a.doctor_id  = d.doctor_id
+            {where_clause}
             ORDER BY a.appointment_date DESC
-        """)
+            LIMIT %s OFFSET %s
+        """, params + [per_page, offset])
         rows = cur.fetchall()
-        return jsonify([{
+        appointments = [{
             "appointment_id":   r[0],
             "appointment_date": str(r[1]),
             "status":           r[2],
             "reason":           r[3],
             "no_show_risk":     float(r[4]) if r[4] else None,
-            "patient_name":     r[5],
-            "patient_email":    r[6],
-            "doctor_name":      r[7],
-            "specialization":   r[8]
-        } for r in rows]), 200
+            "patient_id":       r[5],
+            "doctor_id":        r[6],
+            "patient_name":     r[7],
+            "patient_email":    r[8],
+            "doctor_name":      r[9],
+            "specialization":   r[10]
+        } for r in rows]
+
+        # Unfiltered aggregate stats for the stat cards — always the full
+        # dataset, independent of the current search/status filter.
+        cur.execute("SELECT COUNT(*) FROM appointments")
+        total_all = cur.fetchone()[0]
+        cur.execute("SELECT COUNT(*) FROM appointments WHERE status = 'scheduled'")
+        scheduled_count = cur.fetchone()[0]
+        cur.execute("SELECT COUNT(*) FROM appointments WHERE status = 'completed'")
+        completed_count = cur.fetchone()[0]
+        cur.execute("SELECT COUNT(*) FROM appointments WHERE status = 'cancelled'")
+        cancelled_count = cur.fetchone()[0]
+
+        return jsonify({
+            "items":    appointments,
+            "total":    total,
+            "page":     page,
+            "per_page": per_page,
+            "stats": {
+                "total":     total_all,
+                "scheduled": scheduled_count,
+                "completed": completed_count,
+                "cancelled": cancelled_count
+            }
+        }), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 500
     finally:
@@ -388,7 +799,7 @@ def get_all_appointments():
 # ─────────────────────────────────────────
 # POST /api/admin/nl-query
 # Natural language analytics query
-# Admin types a question → Gemini answers
+# Admin types a question → AI (Ollama or Gemini, via ai_client.py) answers
 # using live KPI data from the DB
 # ─────────────────────────────────────────
 @admin_bp.route("/admin/nl-query", methods=["POST"])
@@ -511,11 +922,6 @@ TOP DOCTORS BY APPOINTMENTS:
 {chr(10).join([f"  {i+1}. Dr. {d['name']} ({d['specialization']}): {d['appointments']} appointments" for i, d in enumerate(top_docs)])}
 """
 
-        # Call Ollama with context + question
-        import requests as req
-        ollama_url   = os.getenv("OLLAMA_URL", "http://localhost:11434")
-        ollama_model = os.getenv("OLLAMA_MODEL", "llama3.2:3b")
-
         prompt = f"""You are an AI analytics assistant for MedCore AI, a healthcare management system.
 You have access to live system data. Answer the admin's question clearly and concisely.
 
@@ -533,12 +939,7 @@ Instructions:
 
 Answer:"""
 
-        resp = req.post(
-            f"{ollama_url}/api/generate",
-            json={"model": ollama_model, "prompt": prompt, "stream": False},
-            timeout=60
-        )
-        answer = resp.json().get("response", "Unable to process query.").strip()
+        answer = generate_text(prompt) or "Unable to process query."
         return jsonify({
             "answer":  answer,
             "context": {
@@ -552,6 +953,117 @@ Answer:"""
     except Exception as e:
         print(f"NL query error: {e}")
         return jsonify({"error": "Unable to process query at this time."}), 500
+    finally:
+        cur.close()
+        conn.close()
+
+
+# ─────────────────────────────────────────
+# GET /api/admin/specialties
+# Single source of truth for medical specialties
+# ─────────────────────────────────────────
+@admin_bp.route("/admin/specialties", methods=["GET"])
+@token_required
+@role_required(["admin", "doctor"])
+def get_specialties():
+    conn = get_db()
+    cur  = conn.cursor()
+    try:
+        cur.execute("""
+            SELECT specialty_id, name, description, is_active
+            FROM specialties WHERE is_active = TRUE ORDER BY name
+        """)
+        return jsonify([{
+            "specialty_id": r[0],
+            "name":         r[1],
+            "description":  r[2],
+            "is_active":    r[3]
+        } for r in cur.fetchall()]), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    finally:
+        cur.close()
+        conn.close()
+
+
+# ─────────────────────────────────────────
+# POST /api/admin/specialties
+# Add a new specialty
+# ─────────────────────────────────────────
+@admin_bp.route("/admin/specialties", methods=["POST"])
+@token_required
+@role_required(["admin"])
+def create_specialty():
+    data = request.json
+    name = (data.get("name") or "").strip()
+    if not name:
+        return jsonify({"error": "name is required"}), 400
+
+    conn = get_db()
+    cur  = conn.cursor()
+    try:
+        cur.execute("SELECT specialty_id FROM specialties WHERE name = %s", (name,))
+        if cur.fetchone():
+            return jsonify({"error": "Specialty already exists"}), 409
+
+        cur.execute("""
+            INSERT INTO specialties (name, description)
+            VALUES (%s, %s) RETURNING specialty_id
+        """, (name, data.get("description", "")))
+        specialty_id = cur.fetchone()[0]
+        conn.commit()
+        return jsonify({
+            "message":      "Specialty added successfully",
+            "specialty_id": specialty_id,
+            "name":         name
+        }), 201
+    except Exception as e:
+        conn.rollback()
+        return jsonify({"error": str(e)}), 500
+    finally:
+        cur.close()
+        conn.close()
+
+
+# ─────────────────────────────────────────
+# GET /api/admin/doctors/:id/feedback
+# A doctor's ratings, as seen by admin
+# ─────────────────────────────────────────
+@admin_bp.route("/admin/doctors/<int:doctor_id>/feedback", methods=["GET"])
+@token_required
+@role_required(["admin"])
+def get_admin_doctor_feedback(doctor_id):
+    conn = get_db()
+    cur  = conn.cursor()
+    try:
+        cur.execute("""
+            SELECT AVG(rating), COUNT(*) FROM patient_feedback WHERE doctor_id = %s
+        """, (doctor_id,))
+        avg_rating, feedback_count = cur.fetchone()
+
+        cur.execute("""
+            SELECT f.rating, f.comment, f.created_at,
+                   p.first_name || ' ' || p.last_name AS patient_name
+            FROM patient_feedback f
+            JOIN patients p ON f.patient_id = p.patient_id
+            WHERE f.doctor_id = %s
+            ORDER BY f.created_at DESC
+            LIMIT 20
+        """, (doctor_id,))
+        feedback = [{
+            "rating":       r[0],
+            "comment":      r[1],
+            "created_at":   str(r[2]),
+            "patient_name": r[3]
+        } for r in cur.fetchall()]
+
+        return jsonify({
+            "avg_rating":     round(float(avg_rating), 1) if avg_rating else None,
+            "feedback_count": feedback_count or 0,
+            "feedback":       feedback
+        }), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
     finally:
         cur.close()
         conn.close()
