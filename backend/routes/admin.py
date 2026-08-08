@@ -107,6 +107,34 @@ def get_kpis():
             for r in cur.fetchall()
         ]
 
+        # Referrals this month
+        cur.execute("""
+            SELECT COUNT(*) FROM referrals
+            WHERE DATE_TRUNC('month', created_at) = DATE_TRUNC('month', CURRENT_DATE)
+        """)
+        referrals_this_month = cur.fetchone()[0]
+
+        # Most-referred-to specialty
+        cur.execute("""
+            SELECT d.specialization, COUNT(*) as total
+            FROM referrals r
+            JOIN doctors d ON r.referred_to_doctor_id = d.doctor_id
+            GROUP BY d.specialization
+            ORDER BY total DESC
+            LIMIT 1
+        """)
+        top_row = cur.fetchone()
+        most_referred_specialty = top_row[0] if top_row else None
+
+        # Video vs in-person split
+        cur.execute("""
+            SELECT COALESCE(t.name, 'In-Person'), COUNT(*)
+            FROM appointments a
+            LEFT JOIN appointment_types t ON a.type_id = t.type_id
+            GROUP BY COALESCE(t.name, 'In-Person')
+        """)
+        by_appt_type = [{"type": r[0], "count": r[1]} for r in cur.fetchall()]
+
         return jsonify({
             "total_patients":    total_patients,
             "total_doctors":     total_doctors,
@@ -117,7 +145,10 @@ def get_kpis():
             "new_this_month":     new_this_month,
             "daily_appointments": daily_appts,
             "by_status":          by_status,
-            "top_doctors":        top_doctors
+            "top_doctors":        top_doctors,
+            "referrals_this_month":    referrals_this_month,
+            "most_referred_specialty": most_referred_specialty,
+            "by_appointment_type":     by_appt_type
         }), 200
 
     except Exception as e:
@@ -538,6 +569,14 @@ def get_admin_doctor_detail(doctor_id):
             "patient_id":       r[5]
         } for r in cur.fetchall()]
 
+        cur.execute("""
+            SELECT AVG(rating), COUNT(*)
+            FROM patient_feedback WHERE doctor_id = %s
+        """, (doctor_id,))
+        avg_rating, feedback_count = cur.fetchone()
+        doctor["avg_rating"]     = round(float(avg_rating), 1) if avg_rating else None
+        doctor["feedback_count"] = feedback_count or 0
+
         return jsonify(doctor), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -760,7 +799,7 @@ def get_all_appointments():
 # ─────────────────────────────────────────
 # POST /api/admin/nl-query
 # Natural language analytics query
-# Admin types a question → Gemini answers
+# Admin types a question → AI (Ollama or Gemini, via ai_client.py) answers
 # using live KPI data from the DB
 # ─────────────────────────────────────────
 @admin_bp.route("/admin/nl-query", methods=["POST"])
@@ -914,6 +953,117 @@ Answer:"""
     except Exception as e:
         print(f"NL query error: {e}")
         return jsonify({"error": "Unable to process query at this time."}), 500
+    finally:
+        cur.close()
+        conn.close()
+
+
+# ─────────────────────────────────────────
+# GET /api/admin/specialties
+# Single source of truth for medical specialties
+# ─────────────────────────────────────────
+@admin_bp.route("/admin/specialties", methods=["GET"])
+@token_required
+@role_required(["admin", "doctor"])
+def get_specialties():
+    conn = get_db()
+    cur  = conn.cursor()
+    try:
+        cur.execute("""
+            SELECT specialty_id, name, description, is_active
+            FROM specialties WHERE is_active = TRUE ORDER BY name
+        """)
+        return jsonify([{
+            "specialty_id": r[0],
+            "name":         r[1],
+            "description":  r[2],
+            "is_active":    r[3]
+        } for r in cur.fetchall()]), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    finally:
+        cur.close()
+        conn.close()
+
+
+# ─────────────────────────────────────────
+# POST /api/admin/specialties
+# Add a new specialty
+# ─────────────────────────────────────────
+@admin_bp.route("/admin/specialties", methods=["POST"])
+@token_required
+@role_required(["admin"])
+def create_specialty():
+    data = request.json
+    name = (data.get("name") or "").strip()
+    if not name:
+        return jsonify({"error": "name is required"}), 400
+
+    conn = get_db()
+    cur  = conn.cursor()
+    try:
+        cur.execute("SELECT specialty_id FROM specialties WHERE name = %s", (name,))
+        if cur.fetchone():
+            return jsonify({"error": "Specialty already exists"}), 409
+
+        cur.execute("""
+            INSERT INTO specialties (name, description)
+            VALUES (%s, %s) RETURNING specialty_id
+        """, (name, data.get("description", "")))
+        specialty_id = cur.fetchone()[0]
+        conn.commit()
+        return jsonify({
+            "message":      "Specialty added successfully",
+            "specialty_id": specialty_id,
+            "name":         name
+        }), 201
+    except Exception as e:
+        conn.rollback()
+        return jsonify({"error": str(e)}), 500
+    finally:
+        cur.close()
+        conn.close()
+
+
+# ─────────────────────────────────────────
+# GET /api/admin/doctors/:id/feedback
+# A doctor's ratings, as seen by admin
+# ─────────────────────────────────────────
+@admin_bp.route("/admin/doctors/<int:doctor_id>/feedback", methods=["GET"])
+@token_required
+@role_required(["admin"])
+def get_admin_doctor_feedback(doctor_id):
+    conn = get_db()
+    cur  = conn.cursor()
+    try:
+        cur.execute("""
+            SELECT AVG(rating), COUNT(*) FROM patient_feedback WHERE doctor_id = %s
+        """, (doctor_id,))
+        avg_rating, feedback_count = cur.fetchone()
+
+        cur.execute("""
+            SELECT f.rating, f.comment, f.created_at,
+                   p.first_name || ' ' || p.last_name AS patient_name
+            FROM patient_feedback f
+            JOIN patients p ON f.patient_id = p.patient_id
+            WHERE f.doctor_id = %s
+            ORDER BY f.created_at DESC
+            LIMIT 20
+        """, (doctor_id,))
+        feedback = [{
+            "rating":       r[0],
+            "comment":      r[1],
+            "created_at":   str(r[2]),
+            "patient_name": r[3]
+        } for r in cur.fetchall()]
+
+        return jsonify({
+            "avg_rating":     round(float(avg_rating), 1) if avg_rating else None,
+            "feedback_count": feedback_count or 0,
+            "feedback":       feedback
+        }), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
     finally:
         cur.close()
         conn.close()

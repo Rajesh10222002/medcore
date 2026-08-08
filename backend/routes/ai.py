@@ -499,7 +499,8 @@ Return only valid JSON."""
 
 # ─────────────────────────────────────────
 # GET /api/ai/patient-summary/:patient_id
-# Uses Gemini — doctor-facing, quality matters
+# Provider selected via AI_PROVIDER env var (see ai_client.py) — Ollama
+# locally, Gemini in the deployed environment
 # ─────────────────────────────────────────
 @ai_bp.route("/ai/patient-summary/<int:patient_id>", methods=["GET"])
 @token_required
@@ -719,10 +720,10 @@ def suggest_specialty():
     conn = get_db()
     cur  = conn.cursor()
     try:
-        cur.execute("""
-            SELECT DISTINCT specialization FROM doctors
-            WHERE specialization IS NOT NULL ORDER BY specialization
-        """)
+        # Canonical list from the specialties table, not just whatever
+        # values happen to already be on a doctor row — guarantees the
+        # AI can never suggest a specialty that isn't a real, active one.
+        cur.execute("SELECT name FROM specialties WHERE is_active ORDER BY name")
         specialties = [r[0] for r in cur.fetchall()]
     finally:
         cur.close()

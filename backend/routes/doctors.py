@@ -514,6 +514,9 @@ def save_vitals(patient_id):
                 "temperature":        ("8310-5", "Body temperature",         "Cel"),
                 "respiratory_rate":   ("9279-1", "Respiratory rate",         "/min"),
                 "oxygen_saturation":  ("2708-6", "Oxygen saturation",        "%"),
+                "weight":             ("29463-7", "Body weight",             "kg"),
+                "height":             ("8302-2",  "Body height",            "cm"),
+                "glucose":            ("2339-0",  "Glucose",                "mg/dL"),
             }
             for key, (loinc, display, unit) in vital_map.items():
                 value = data.get(key)
@@ -929,6 +932,201 @@ def get_blood_group(patient_id):
 
     except Exception as e:
         return jsonify({"blood_group": None}), 200
+    finally:
+        cur.close()
+        conn.close()
+
+
+# ─────────────────────────────────────────
+# GET /api/doctor/me/feedback
+# The logged-in doctor's own ratings
+# ─────────────────────────────────────────
+@doctors_bp.route("/doctor/me/feedback", methods=["GET"])
+@token_required
+@role_required(["doctor"])
+def get_my_feedback():
+    doctor_id = request.user.get("doctor_id")
+    conn = get_db()
+    cur  = conn.cursor()
+    try:
+        cur.execute("""
+            SELECT AVG(rating), COUNT(*) FROM patient_feedback WHERE doctor_id = %s
+        """, (doctor_id,))
+        avg_rating, feedback_count = cur.fetchone()
+
+        cur.execute("""
+            SELECT f.rating, f.comment, f.created_at,
+                   p.first_name || ' ' || p.last_name AS patient_name
+            FROM patient_feedback f
+            JOIN patients p ON f.patient_id = p.patient_id
+            WHERE f.doctor_id = %s
+            ORDER BY f.created_at DESC
+            LIMIT 20
+        """, (doctor_id,))
+        feedback = [{
+            "rating":       r[0],
+            "comment":      r[1],
+            "created_at":   str(r[2]),
+            "patient_name": r[3]
+        } for r in cur.fetchall()]
+
+        return jsonify({
+            "avg_rating":     round(float(avg_rating), 1) if avg_rating else None,
+            "feedback_count": feedback_count or 0,
+            "feedback":       feedback
+        }), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    finally:
+        cur.close()
+        conn.close()
+
+
+# ─────────────────────────────────────────
+# POST /api/doctor/patients/:id/referrals
+# Refer a patient to another doctor
+# ─────────────────────────────────────────
+@doctors_bp.route("/doctor/patients/<int:patient_id>/referrals", methods=["POST"])
+@token_required
+@role_required(["doctor"])
+def create_referral(patient_id):
+    data                  = request.json
+    referring_doctor_id   = request.user.get("doctor_id")
+    referred_to_doctor_id = data.get("referred_to_doctor_id")
+    reason                = (data.get("reason") or "").strip()
+
+    if not referred_to_doctor_id or not reason:
+        return jsonify({"error": "referred_to_doctor_id and reason are required"}), 400
+    if int(referred_to_doctor_id) == referring_doctor_id:
+        return jsonify({"error": "Cannot refer a patient to yourself"}), 400
+
+    conn = get_db()
+    cur  = conn.cursor()
+    try:
+        cur.execute("SELECT doctor_id FROM doctors WHERE doctor_id = %s", (referred_to_doctor_id,))
+        if not cur.fetchone():
+            return jsonify({"error": "Referred doctor not found"}), 404
+
+        cur.execute("""
+            INSERT INTO referrals
+            (patient_id, referring_doctor_id, referred_to_doctor_id, reason)
+            VALUES (%s, %s, %s, %s) RETURNING referral_id
+        """, (patient_id, referring_doctor_id, referred_to_doctor_id, reason))
+        referral_id = cur.fetchone()[0]
+        conn.commit()
+        return jsonify({
+            "message":     "Referral created successfully",
+            "referral_id": referral_id,
+            "status":      "pending"
+        }), 201
+    except Exception as e:
+        conn.rollback()
+        return jsonify({"error": str(e)}), 500
+    finally:
+        cur.close()
+        conn.close()
+
+
+# ─────────────────────────────────────────
+# GET /api/doctor/referrals/incoming
+# Pending referrals sent to the logged-in doctor
+# ─────────────────────────────────────────
+@doctors_bp.route("/doctor/referrals/incoming", methods=["GET"])
+@token_required
+@role_required(["doctor"])
+def get_incoming_referrals():
+    doctor_id = request.user.get("doctor_id")
+    conn = get_db()
+    cur  = conn.cursor()
+    try:
+        cur.execute("""
+            SELECT r.referral_id, r.patient_id,
+                   p.first_name || ' ' || p.last_name AS patient_name,
+                   d.first_name || ' ' || d.last_name AS referring_doctor_name,
+                   r.reason, r.status, r.created_at
+            FROM referrals r
+            JOIN patients p ON r.patient_id = p.patient_id
+            JOIN doctors d ON r.referring_doctor_id = d.doctor_id
+            WHERE r.referred_to_doctor_id = %s AND r.status = 'pending'
+            ORDER BY r.created_at DESC
+        """, (doctor_id,))
+        return jsonify([{
+            "referral_id":           r[0],
+            "patient_id":            r[1],
+            "patient_name":          r[2],
+            "referring_doctor_name": r[3],
+            "reason":                r[4],
+            "status":                r[5],
+            "created_at":            str(r[6])
+        } for r in cur.fetchall()]), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    finally:
+        cur.close()
+        conn.close()
+
+
+# ─────────────────────────────────────────
+# PUT /api/doctor/referrals/:id/accept
+# ─────────────────────────────────────────
+@doctors_bp.route("/doctor/referrals/<int:referral_id>/accept", methods=["PUT"])
+@token_required
+@role_required(["doctor"])
+def accept_referral(referral_id):
+    doctor_id = request.user.get("doctor_id")
+    conn = get_db()
+    cur  = conn.cursor()
+    try:
+        cur.execute("""
+            SELECT referral_id FROM referrals
+            WHERE referral_id = %s AND referred_to_doctor_id = %s
+        """, (referral_id, doctor_id))
+        if not cur.fetchone():
+            return jsonify({"error": "Referral not found"}), 404
+
+        cur.execute(
+            "UPDATE referrals SET status = 'accepted' WHERE referral_id = %s",
+            (referral_id,)
+        )
+        conn.commit()
+        return jsonify({"message": "Referral accepted", "status": "accepted"}), 200
+    except Exception as e:
+        conn.rollback()
+        return jsonify({"error": str(e)}), 500
+    finally:
+        cur.close()
+        conn.close()
+
+
+# ─────────────────────────────────────────
+# PUT /api/doctor/referrals/:id/decline
+# ─────────────────────────────────────────
+@doctors_bp.route("/doctor/referrals/<int:referral_id>/decline", methods=["PUT"])
+@token_required
+@role_required(["doctor"])
+def decline_referral(referral_id):
+    doctor_id      = request.user.get("doctor_id")
+    data           = request.get_json(silent=True) or {}
+    decline_reason = (data.get("decline_reason") or "").strip() or None
+    conn = get_db()
+    cur  = conn.cursor()
+    try:
+        cur.execute("""
+            SELECT referral_id FROM referrals
+            WHERE referral_id = %s AND referred_to_doctor_id = %s
+        """, (referral_id, doctor_id))
+        if not cur.fetchone():
+            return jsonify({"error": "Referral not found"}), 404
+
+        cur.execute(
+            "UPDATE referrals SET status = 'declined', decline_reason = %s WHERE referral_id = %s",
+            (decline_reason, referral_id)
+        )
+        conn.commit()
+        return jsonify({"message": "Referral declined", "status": "declined"}), 200
+    except Exception as e:
+        conn.rollback()
+        return jsonify({"error": str(e)}), 500
     finally:
         cur.close()
         conn.close()

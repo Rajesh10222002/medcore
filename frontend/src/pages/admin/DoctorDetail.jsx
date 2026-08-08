@@ -5,11 +5,11 @@ import PageWrapper from "../../components/shared/PageWrapper";
 import { SkeletonCard } from "../../components/shared/SkeletonCard";
 import EmptyState from "../../components/shared/EmptyState";
 import { showError } from "../../components/shared/Toast";
-import { getAdminDoctorDetail } from "../../api/api";
+import { getAdminDoctorDetail, getAdminDoctorFeedback } from "../../api/api";
 import {
   ArrowLeft, Stethoscope, Award,
   Phone, Mail, Calendar,
-  CheckCircle, XCircle, Clock, UserX
+  CheckCircle, XCircle, Clock, UserX, Star
 } from "lucide-react";
 
 const DAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
@@ -17,13 +17,14 @@ const DAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 export default function AdminDoctorDetail() {
   const { id }   = useParams();
   const navigate = useNavigate();
-  const [doctor,  setDoctor]  = useState(null);
-  const [loading, setLoading] = useState(true);
+  const [doctor,   setDoctor]   = useState(null);
+  const [feedback, setFeedback] = useState(null);
+  const [loading,  setLoading]  = useState(true);
 
   useEffect(() => {
     setLoading(true);
-    getAdminDoctorDetail(id)
-      .then(res => setDoctor(res.data))
+    Promise.all([getAdminDoctorDetail(id), getAdminDoctorFeedback(id)])
+      .then(([dRes, fRes]) => { setDoctor(dRes.data); setFeedback(fRes.data); })
       .catch(() => showError("Failed to load doctor details"))
       .finally(() => setLoading(false));
   }, [id]);
@@ -111,12 +112,13 @@ export default function AdminDoctorDetail() {
         </div>
 
         {/* Stats */}
-        <div className="grid grid-cols-4 gap-4 mb-6">
+        <div className="grid grid-cols-5 gap-4 mb-6">
           {[
             { icon: Calendar,    label: "Total",     value: doctor?.stats?.total,     color: "text-violet-600",  bg: "bg-violet-50"  },
             { icon: Clock,       label: "Scheduled", value: doctor?.stats?.scheduled, color: "text-blue-600",    bg: "bg-blue-50"    },
             { icon: CheckCircle, label: "Completed", value: doctor?.stats?.completed, color: "text-emerald-600", bg: "bg-emerald-50" },
             { icon: XCircle,     label: "Cancelled", value: doctor?.stats?.cancelled, color: "text-red-500",     bg: "bg-red-50"     },
+            { icon: Star,        label: "Avg Rating", value: doctor?.avg_rating ?? "—", color: "text-amber-500",  bg: "bg-amber-50"   },
           ].map(({ icon: Icon, label, value, color, bg }) => (
             <div key={label} className="bg-white rounded-2xl p-5 border border-slate-100 shadow-sm">
               <div className="flex items-center justify-between mb-2">
@@ -194,6 +196,47 @@ export default function AdminDoctorDetail() {
                 ))
               )}
             </div>
+          </div>
+        </div>
+
+        {/* Patient feedback */}
+        <div className="bg-white rounded-2xl border border-slate-100 shadow-sm mt-6">
+          <div className="flex items-center gap-3 p-5 border-b border-slate-100">
+            <div className="w-8 h-8 bg-amber-50 rounded-lg flex items-center justify-center">
+              <Star size={16} className="text-amber-500" />
+            </div>
+            <h3 className="font-semibold text-slate-800">
+              Patient Feedback
+              {feedback?.feedback_count > 0 && (
+                <span className="text-slate-400 font-normal ml-2 text-sm">
+                  ({feedback.feedback_count}, avg {feedback.avg_rating})
+                </span>
+              )}
+            </h3>
+          </div>
+          <div className="divide-y divide-slate-50">
+            {!feedback?.feedback?.length ? (
+              <EmptyState icon={Star} title="No feedback yet" className="py-6" size={28} />
+            ) : (
+              feedback.feedback.map((f, i) => (
+                <div key={i} className="p-4">
+                  <div className="flex items-center justify-between">
+                    <span className="text-slate-800 text-sm font-medium">{f.patient_name}</span>
+                    <div className="flex items-center gap-0.5">
+                      {[1, 2, 3, 4, 5].map(n => (
+                        <Star
+                          key={n}
+                          size={12}
+                          className={n <= f.rating ? "text-amber-400 fill-amber-400" : "text-slate-200"}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                  {f.comment && <p className="text-slate-500 text-xs mt-1">{f.comment}</p>}
+                  <p className="text-slate-300 text-xs mt-1">{f.created_at?.slice(0, 10)}</p>
+                </div>
+              ))
+            )}
           </div>
         </div>
       </PageWrapper>

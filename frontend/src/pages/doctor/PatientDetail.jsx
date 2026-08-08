@@ -10,7 +10,8 @@ import {
   getDoctorPatient, saveVitals,
   getPatientSummaryAI, checkDrugInteractions,
   addDiagnosis, addMedication, addAllergy,
-  setBloodGroup, getBloodGroup
+  setBloodGroup, getBloodGroup,
+  getSpecialties, getDoctors, createReferral
 } from "../../api/api";
 import { showSuccess, showError } from "../../components/shared/Toast";
 import {
@@ -19,7 +20,8 @@ import {
   CheckCircle, AlertCircle, Plus,
   Sparkles, ShieldAlert,
   ChevronDown, ChevronUp, Calendar,
-  Heart, Wind, Thermometer, Droplets, UserX
+  Heart, Wind, Thermometer, Droplets, UserX, Share2,
+  Scale, Ruler, TestTube
 } from "lucide-react";
 
 // ── Vitals card ─────────────────────────
@@ -53,7 +55,8 @@ export default function PatientDetail() {
   const [savingVitals,   setSavingVitals]   = useState(false);
   const [vitalsForm,     setVitalsForm]     = useState({
     heart_rate: "", systolic_bp: "", diastolic_bp: "",
-    temperature: "", respiratory_rate: "", oxygen_saturation: ""
+    temperature: "", respiratory_rate: "", oxygen_saturation: "",
+    weight: "", height: "", glucose: ""
   });
   const [aiSummary,      setAiSummary]      = useState("");
   const [loadingSummary, setLoadingSummary] = useState(false);
@@ -66,6 +69,7 @@ export default function PatientDetail() {
   const [showAddMedication, setShowAddMedication] = useState(false);
   const [showAddAllergy,    setShowAddAllergy]     = useState(false);
   const [showBloodGroup,    setShowBloodGroup]     = useState(false);
+  const [showReferral,      setShowReferral]       = useState(false);
 
   // Add forms
   const [diagnosisForm,  setDiagnosisForm]  = useState({ display: "", code: "" });
@@ -73,6 +77,12 @@ export default function PatientDetail() {
   const [allergyForm,    setAllergyForm]    = useState({ name: "", severity: "mild" });
   const [bloodGroupForm, setBloodGroupForm] = useState({ blood_group: "" });
   const [saving,         setSaving]         = useState(false);
+
+  // Referral
+  const [referralSpecialties, setReferralSpecialties] = useState([]);
+  const [referralDoctors,     setReferralDoctors]     = useState([]);
+  const [referralForm,        setReferralForm]        = useState({ specialty: "", referred_to_doctor_id: "", reason: "" });
+  const [savingReferral,      setSavingReferral]      = useState(false);
 
   // Blood group state
   const [bloodGroup,     setBloodGroup_]    = useState(null);
@@ -190,6 +200,40 @@ export default function PatientDetail() {
     }
   };
 
+  // ── REFERRAL ────────────────────────────
+  const openReferralModal = async () => {
+    setShowReferral(true);
+    if (referralSpecialties.length === 0) {
+      try {
+        const [sRes, dRes] = await Promise.all([getSpecialties(), getDoctors()]);
+        setReferralSpecialties(sRes.data);
+        setReferralDoctors(dRes.data);
+      } catch {
+        showError("Failed to load specialties/doctors for referral");
+      }
+    }
+  };
+
+  const handleCreateReferral = async () => {
+    if (!referralForm.referred_to_doctor_id || !referralForm.reason.trim()) {
+      showError("Select a doctor and enter a reason for the referral"); return;
+    }
+    setSavingReferral(true);
+    try {
+      await createReferral(id, {
+        referred_to_doctor_id: parseInt(referralForm.referred_to_doctor_id, 10),
+        reason: referralForm.reason
+      });
+      showSuccess("Referral created successfully.");
+      setShowReferral(false);
+      setReferralForm({ specialty: "", referred_to_doctor_id: "", reason: "" });
+    } catch (err) {
+      showError(err.response?.data?.error || "Failed to create referral");
+    } finally {
+      setSavingReferral(false);
+    }
+  };
+
   // ── BLOOD GROUP ────────────────────────
   const handleSaveBloodGroup = async () => {
     if (!bloodGroupForm.blood_group) {
@@ -264,6 +308,9 @@ export default function PatientDetail() {
     "Body temperature":         { icon: Thermometer, color: "text-orange-600", bg: "bg-orange-50", unit: "°C"   },
     "Respiratory rate":         { icon: Wind,        color: "text-sky-600",    bg: "bg-sky-50",    unit: "/min" },
     "Oxygen saturation":        { icon: Droplets,    color: "text-purple-600", bg: "bg-purple-50", unit: "%"    },
+    "Body weight":              { icon: Scale,       color: "text-teal-600",   bg: "bg-teal-50",   unit: "kg"   },
+    "Body height":              { icon: Ruler,       color: "text-indigo-600", bg: "bg-indigo-50", unit: "cm"   },
+    "Glucose":                  { icon: TestTube,    color: "text-amber-600",  bg: "bg-amber-50",  unit: "mg/dL"},
   };
 
   // ── LOADING ────────────────────────────
@@ -390,6 +437,12 @@ export default function PatientDetail() {
               className="flex items-center gap-2 px-3 py-2 bg-rose-500 hover:bg-rose-600 text-white text-sm font-medium rounded-xl transition-colors"
             >
               <Heart size={15} /> Blood Group
+            </button>
+            <button
+              onClick={openReferralModal}
+              className="flex items-center gap-2 px-3 py-2 bg-indigo-500 hover:bg-indigo-600 text-white text-sm font-medium rounded-xl transition-colors"
+            >
+              <Share2 size={15} /> Refer
             </button>
             <button
               onClick={() => navigate(`/doctor/notes?patient=${id}`)}
@@ -840,6 +893,9 @@ export default function PatientDetail() {
                   { key: "temperature",        label: "Temperature",      unit: "°C",   placeholder: "36.5-37.5" },
                   { key: "respiratory_rate",   label: "Respiratory Rate", unit: "/min", placeholder: "12-20"     },
                   { key: "oxygen_saturation",  label: "SpO2",             unit: "%",    placeholder: "95-100"    },
+                  { key: "weight",             label: "Weight",           unit: "kg",   placeholder: "50-90"     },
+                  { key: "height",             label: "Height",           unit: "cm",   placeholder: "150-190"   },
+                  { key: "glucose",            label: "Glucose",          unit: "mg/dL", placeholder: "70-140"   },
                 ].map(({ key, label, unit, placeholder }) => (
                   <div key={key}>
                     <label className="block text-xs font-semibold text-slate-600 mb-1 uppercase tracking-wide">
@@ -1007,6 +1063,72 @@ export default function PatientDetail() {
                 {saving
                   ? <><Loader2 size={16} className="animate-spin" /> Saving...</>
                   : <><CheckCircle size={16} /> Save Allergy</>
+                }
+              </button>
+            </div>
+          </Modal>
+        )}
+      </AnimatePresence>
+
+      {/* ── REFER TO SPECIALIST MODAL ── */}
+      <AnimatePresence>
+        {showReferral && (
+          <Modal title="Refer to Specialist" onClose={() => setShowReferral(false)}>
+            <div className="space-y-3">
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 mb-1.5 uppercase tracking-wide">
+                  Specialty
+                </label>
+                <select
+                  value={referralForm.specialty}
+                  onChange={e => setReferralForm({ ...referralForm, specialty: e.target.value, referred_to_doctor_id: "" })}
+                  className="w-full px-3 py-2.5 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-slate-50"
+                >
+                  <option value="">All specialties</option>
+                  {referralSpecialties.map(s => (
+                    <option key={s.specialty_id} value={s.name}>{s.name}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 mb-1.5 uppercase tracking-wide">
+                  Doctor *
+                </label>
+                <select
+                  value={referralForm.referred_to_doctor_id}
+                  onChange={e => setReferralForm({ ...referralForm, referred_to_doctor_id: e.target.value })}
+                  className="w-full px-3 py-2.5 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-slate-50"
+                >
+                  <option value="">Select doctor...</option>
+                  {referralDoctors
+                    .filter(d => !referralForm.specialty || d.specialization === referralForm.specialty)
+                    .map(d => (
+                      <option key={d.doctor_id} value={d.doctor_id}>
+                        Dr. {d.first_name} {d.last_name} — {d.specialization}
+                      </option>
+                    ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 mb-1.5 uppercase tracking-wide">
+                  Reason for Referral *
+                </label>
+                <textarea
+                  rows={3}
+                  placeholder="e.g. Elevated BP on 3 consecutive visits, recommend cardiology workup"
+                  value={referralForm.reason}
+                  onChange={e => setReferralForm({ ...referralForm, reason: e.target.value })}
+                  className="w-full px-3 py-2.5 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-slate-50 resize-none"
+                />
+              </div>
+              <button
+                onClick={handleCreateReferral}
+                disabled={savingReferral}
+                className="w-full flex items-center justify-center gap-2 bg-indigo-500 hover:bg-indigo-600 disabled:opacity-50 text-white font-semibold py-2.5 rounded-xl transition-colors"
+              >
+                {savingReferral
+                  ? <><Loader2 size={16} className="animate-spin" /> Sending...</>
+                  : <><Share2 size={16} /> Send Referral</>
                 }
               </button>
             </div>

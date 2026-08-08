@@ -139,7 +139,8 @@ def get_day_detail(date_str):
             SELECT a.appointment_id, a.appointment_date, a.status,
                    a.reason, a.patient_id,
                    p.first_name || ' ' || p.last_name AS patient_name,
-                   p.phone, p.age_years
+                   p.phone, p.age_years,
+                   COALESCE(t.name, 'In-Person') AS appointment_type
             FROM appointments a
             JOIN (
                 SELECT patient_id,
@@ -147,6 +148,7 @@ def get_day_detail(date_str):
                        EXTRACT(YEAR FROM AGE(date_of_birth))::int AS age_years
                 FROM patients
             ) p ON a.patient_id = p.patient_id
+            LEFT JOIN appointment_types t ON a.type_id = t.type_id
             WHERE a.doctor_id = %s
               AND DATE(a.appointment_date) = %s
             ORDER BY a.appointment_date ASC
@@ -160,7 +162,8 @@ def get_day_detail(date_str):
             "patient_id":       r[4],
             "patient_name":     r[5],
             "phone":            r[6],
-            "age":              r[7]
+            "age":              r[7],
+            "appointment_type": r[8]
         } for r in rows]
 
         # Also get blocks for this day

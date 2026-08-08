@@ -6,7 +6,7 @@ import PageWrapper from "../../components/shared/PageWrapper";
 import { SkeletonTable } from "../../components/shared/SkeletonCard";
 import EmptyState from "../../components/shared/EmptyState";
 import Modal from "../../components/shared/Modal";
-import { getAdminDoctors, createDoctor } from "../../api/api";
+import { getAdminDoctors, createDoctor, getSpecialties, createSpecialty } from "../../api/api";
 import { showSuccess, showError } from "../../components/shared/Toast";
 import {
   UserPlus, Stethoscope, Plus,
@@ -14,31 +14,52 @@ import {
   Mail, Phone, Award, ChevronRight
 } from "lucide-react";
 
-const SPECIALIZATIONS = [
-  "General Medicine", "Cardiology", "Neurology",
-  "Orthopedics", "Pediatrics", "Dermatology",
-  "Gynecology", "Oncology", "Psychiatry",
-  "Radiology", "Anesthesiology", "Emergency Medicine"
-];
-
 export default function AdminDoctors() {
   const navigate = useNavigate();
   const [doctors,   setDoctors]   = useState([]);
+  const [specialties, setSpecialties] = useState([]);
   const [loading,   setLoading]   = useState(true);
   const [showForm,  setShowForm]  = useState(false);
   const [saving,    setSaving]    = useState(false);
+  const [showNewSpecialty, setShowNewSpecialty] = useState(false);
+  const [newSpecialty, setNewSpecialty] = useState("");
+  const [addingSpecialty, setAddingSpecialty] = useState(false);
   const [form, setForm] = useState({
     first_name: "", last_name: "", email: "",
     password: "", specialization: "", license_number: "", phone: ""
   });
 
-  useEffect(() => { loadDoctors(); }, []);
+  useEffect(() => { loadDoctors(); loadSpecialties(); }, []);
 
   const loadDoctors = () => {
     getAdminDoctors()
       .then(res => setDoctors(res.data))
       .catch(() => showError("Failed to load doctors"))
       .finally(() => setLoading(false));
+  };
+
+  const loadSpecialties = () => {
+    getSpecialties()
+      .then(res => setSpecialties(res.data))
+      .catch(() => showError("Failed to load specialties"));
+  };
+
+  const handleAddSpecialty = async () => {
+    const name = newSpecialty.trim();
+    if (!name) return;
+    setAddingSpecialty(true);
+    try {
+      await createSpecialty({ name });
+      showSuccess(`"${name}" added to specialties`);
+      setNewSpecialty("");
+      setShowNewSpecialty(false);
+      loadSpecialties();
+      f("specialization", name);
+    } catch (err) {
+      showError(err.response?.data?.error || "Failed to add specialty");
+    } finally {
+      setAddingSpecialty(false);
+    }
   };
 
   const handleCreate = async (e) => {
@@ -147,9 +168,36 @@ export default function AdminDoctors() {
                   </div>
 
                   <div>
-                    <label className="block text-xs font-semibold text-slate-600 mb-1.5 uppercase tracking-wide">
-                      Specialization *
-                    </label>
+                    <div className="flex items-center justify-between mb-1.5">
+                      <label className="block text-xs font-semibold text-slate-600 uppercase tracking-wide">
+                        Specialization *
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() => setShowNewSpecialty(v => !v)}
+                        className="text-xs font-medium text-violet-600 hover:text-violet-700 flex items-center gap-0.5"
+                      >
+                        <Plus size={12} /> New
+                      </button>
+                    </div>
+                    {showNewSpecialty && (
+                      <div className="flex items-center gap-2 mb-2">
+                        <input
+                          placeholder="e.g. Endocrinology"
+                          value={newSpecialty}
+                          onChange={e => setNewSpecialty(e.target.value)}
+                          className="flex-1 px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-violet-500 bg-slate-50"
+                        />
+                        <button
+                          type="button"
+                          disabled={addingSpecialty}
+                          onClick={handleAddSpecialty}
+                          className="px-3 py-2 bg-violet-500 hover:bg-violet-600 disabled:opacity-50 text-white text-sm font-medium rounded-xl transition-colors"
+                        >
+                          {addingSpecialty ? <Loader2 size={14} className="animate-spin" /> : "Add"}
+                        </button>
+                      </div>
+                    )}
                     <select
                       required
                       value={form.specialization}
@@ -157,8 +205,8 @@ export default function AdminDoctors() {
                       className="w-full px-3 py-2.5 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-violet-500 bg-slate-50"
                     >
                       <option value="">Select specialization...</option>
-                      {SPECIALIZATIONS.map(s => (
-                        <option key={s} value={s}>{s}</option>
+                      {specialties.map(s => (
+                        <option key={s.specialty_id} value={s.name}>{s.name}</option>
                       ))}
                     </select>
                   </div>

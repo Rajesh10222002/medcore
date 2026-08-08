@@ -10,12 +10,12 @@ import { showError } from "../../components/shared/Toast";
 import {
   getDoctorProfile, getScheduleCalendar,
   getScheduleLeaves, getDoctorPatients, getDayDetail,
-  getDoctorAnalytics
+  getDoctorAnalytics, getMyDoctorFeedback
 } from "../../api/api";
 import {
   Users, CalendarDays, Clock, CalendarOff,
   FileText, Brain, ChevronRight,
-  TrendingUp, TrendingDown, BarChart3
+  TrendingUp, TrendingDown, BarChart3, Star, Video, Building2
 } from "lucide-react";
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip,
@@ -54,7 +54,9 @@ function StatCard({ icon: Icon, label, value, delay = 0 }) {
           <Icon size={16} className="text-emerald-600" />
         </div>
       </div>
-      <p className="text-3xl font-bold text-slate-800"><AnimatedNumber value={value} /></p>
+      <p className="text-3xl font-bold text-slate-800">
+        {Number.isFinite(value) ? <AnimatedNumber value={value} /> : value}
+      </p>
     </motion.div>
   );
 }
@@ -85,24 +87,27 @@ export default function DoctorDashboard() {
   const [totalPatients, setTotalPatients] = useState(0);
   const [todayAppts, setTodayAppts] = useState([]);
   const [analytics, setAnalytics] = useState(null);
+  const [avgRating, setAvgRating] = useState(null);
   const [loading,   setLoading]   = useState(true);
 
   useEffect(() => {
     const load = async () => {
       try {
         setLoading(true);
-        const [profRes, calRes, leavesRes, patientsRes, analyticsRes] = await Promise.all([
+        const [profRes, calRes, leavesRes, patientsRes, analyticsRes, feedbackRes] = await Promise.all([
           getDoctorProfile(),
           getScheduleCalendar(),
           getScheduleLeaves(),
           getDoctorPatients({ per_page: 1 }),
           getDoctorAnalytics(),
+          getMyDoctorFeedback(),
         ]);
         setProfile(profRes.data);
         setCalendar(calRes.data);
         setLeaves(leavesRes.data);
         setTotalPatients(patientsRes.data.stats?.total || 0);
         setAnalytics(analyticsRes.data);
+        setAvgRating(feedbackRes.data.avg_rating);
 
         const todayStr = new Date().toISOString().split("T")[0];
         const dayRes = await getDayDetail(todayStr);
@@ -161,11 +166,12 @@ export default function DoctorDashboard() {
           </p>
         </div>
 
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6">
           <StatCard icon={CalendarDays} label="Today's Appointments" value={today?.appointments?.total || 0} delay={0.05} />
           <StatCard icon={Clock}        label="This Week"            value={weekTotal} delay={0.1} />
           <StatCard icon={Users}        label="Total Patients"       value={totalPatients} delay={0.15} />
           <StatCard icon={CalendarOff}  label="Upcoming Leaves"      value={leaves.length} delay={0.2} />
+          <StatCard icon={Star}         label="Average Rating"       value={avgRating ?? "—"} delay={0.25} />
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -209,6 +215,10 @@ export default function DoctorDashboard() {
                       <p className="text-slate-800 text-sm font-semibold">{appt.patient_name}</p>
                       <p className="text-slate-400 text-xs mt-0.5 truncate">"{appt.reason}"</p>
                     </div>
+                    {appt.appointment_type === "Video Consultation"
+                      ? <Video size={13} className="text-sky-400 flex-shrink-0" />
+                      : <Building2 size={13} className="text-slate-300 flex-shrink-0" />
+                    }
                     <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
                       appt.status === "scheduled" ? "bg-blue-50 text-blue-600" :
                       appt.status === "completed" ? "bg-green-50 text-green-600" :

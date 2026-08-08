@@ -72,6 +72,33 @@ REASONS = [
 STATUSES = ["scheduled", "completed", "cancelled"]
 STATUS_WEIGHTS = [0.25, 0.55, 0.20]  # realistic distribution
 
+FEEDBACK_COMMENTS = [
+    "Very thorough and explained everything clearly.",
+    "Short wait time, doctor was attentive.",
+    "Helped resolve my issue quickly.",
+    "Great bedside manner, would recommend.",
+    "Listened carefully to my concerns.",
+    "Prescribed medication worked well.",
+    "Clear instructions for follow-up care.",
+    "Answered all my questions patiently.",
+    "Felt rushed, but the advice was useful.",
+    "Waited a while past my slot, otherwise fine.",
+    None, None, None,  # some ratings are submitted with no comment
+]
+FEEDBACK_RATINGS       = [5, 4, 3, 2, 1]
+FEEDBACK_RATING_WEIGHTS = [0.40, 0.30, 0.15, 0.10, 0.05]  # mostly positive
+
+REFERRAL_REASONS = [
+    "Elevated blood pressure on repeat visits, recommend specialist workup",
+    "Persistent symptoms not resolving with current treatment",
+    "Requires specialized diagnostic evaluation",
+    "Patient history suggests need for expert consultation",
+    "Abnormal test results warrant further specialist review",
+    "Chronic condition management needs specialist input",
+    "Symptoms outside my specialty's scope, referring for expert opinion",
+]
+REFERRAL_STATUSES = ["pending", "pending", "accepted", "accepted", "completed", "declined"]
+
 def random_phone():
     return f"+91{random.randint(7000000000, 9999999999)}"
 
@@ -110,8 +137,112 @@ conn = psycopg2.connect(DB_URL)
 cur  = conn.cursor()
 
 try:
-    # ── STEP 1: Clear existing data ───────────────────────────────
-    print("\n[1/5] Clearing existing data...")
+    # ── STEP 1: Ensure admins table + demo admin account exist ─────
+    # `admins` was previously created out-of-band directly in Neon —
+    # not reproducible on a fresh database. Idempotent: never touches
+    # an admin account that already exists.
+    print("\n[1/8] Ensuring admins table + demo admin account...")
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS admins (
+            admin_id   SERIAL PRIMARY KEY,
+            user_id    INTEGER REFERENCES users(user_id),
+            name       VARCHAR,
+            created_at TIMESTAMP DEFAULT NOW()
+        )
+    """)
+    conn.commit()
+
+    cur.execute("SELECT user_id FROM users WHERE email = %s", ("admin@medcore.ai",))
+    row = cur.fetchone()
+    if row:
+        admin_user_id = row[0]
+    else:
+        pwd_hash = hash_password("admin123")
+        cur.execute(
+            "INSERT INTO users (email, password_hash, role) VALUES (%s,%s,'admin') RETURNING user_id",
+            ("admin@medcore.ai", pwd_hash)
+        )
+        admin_user_id = cur.fetchone()[0]
+
+    cur.execute("SELECT admin_id FROM admins WHERE user_id = %s", (admin_user_id,))
+    if not cur.fetchone():
+        cur.execute(
+            "INSERT INTO admins (user_id, name) VALUES (%s, %s)",
+            (admin_user_id, "Administrator")
+        )
+    conn.commit()
+    print("  admins table ready, demo admin account confirmed")
+
+    # ── STEP 2: Ensure lookup/feature tables exist ──────────────────
+    # specialties, appointment_types, patient_feedback, referrals —
+    # see zlocal/NEW_TABLES_SPEC.md. Idempotent: CREATE TABLE IF NOT
+    # EXISTS + ON CONFLICT DO NOTHING, safe to re-run against a DB
+    # that already has data.
+    print("\n[2/8] Ensuring specialties, appointment_types, patient_feedback, referrals...")
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS specialties (
+            specialty_id   SERIAL PRIMARY KEY,
+            name           VARCHAR UNIQUE NOT NULL,
+            description    TEXT,
+            is_active      BOOLEAN DEFAULT TRUE
+        )
+    """)
+    for name in SPECIALIZATIONS:
+        cur.execute(
+            "INSERT INTO specialties (name) VALUES (%s) ON CONFLICT (name) DO NOTHING",
+            (name,)
+        )
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS appointment_types (
+            type_id        SERIAL PRIMARY KEY,
+            name           VARCHAR UNIQUE NOT NULL,
+            duration_mins  INTEGER DEFAULT 30,
+            is_active      BOOLEAN DEFAULT TRUE
+        )
+    """)
+    for name, duration in [("In-Person", 30), ("Video Consultation", 20)]:
+        cur.execute(
+            "INSERT INTO appointment_types (name, duration_mins) VALUES (%s, %s) ON CONFLICT (name) DO NOTHING",
+            (name, duration)
+        )
+    cur.execute("""
+        ALTER TABLE appointments
+        ADD COLUMN IF NOT EXISTS type_id INTEGER REFERENCES appointment_types(type_id)
+    """)
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS patient_feedback (
+            feedback_id     SERIAL PRIMARY KEY,
+            appointment_id  INTEGER NOT NULL REFERENCES appointments(appointment_id),
+            patient_id      INTEGER NOT NULL REFERENCES patients(patient_id),
+            doctor_id       INTEGER NOT NULL REFERENCES doctors(doctor_id),
+            rating          INTEGER CHECK (rating BETWEEN 1 AND 5),
+            comment         TEXT,
+            created_at      TIMESTAMP DEFAULT NOW()
+        )
+    """)
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS referrals (
+            referral_id           SERIAL PRIMARY KEY,
+            patient_id            INTEGER NOT NULL REFERENCES patients(patient_id),
+            referring_doctor_id   INTEGER NOT NULL REFERENCES doctors(doctor_id),
+            referred_to_doctor_id INTEGER NOT NULL REFERENCES doctors(doctor_id),
+            reason                TEXT,
+            status                VARCHAR DEFAULT 'pending',
+            decline_reason        TEXT,
+            created_at            TIMESTAMP DEFAULT NOW()
+        )
+    """)
+    cur.execute("ALTER TABLE referrals ADD COLUMN IF NOT EXISTS decline_reason TEXT")
+    conn.commit()
+    print("  specialties, appointment_types, patient_feedback, referrals ready")
+
+    # ── STEP 3: Clear existing data ───────────────────────────────
+    print("\n[3/8] Clearing existing data...")
+    cur.execute("DELETE FROM patient_feedback")
+    cur.execute("DELETE FROM referrals")
     cur.execute("DELETE FROM doctor_leaves")
     cur.execute("DELETE FROM appointments")
     cur.execute("DELETE FROM clinical_notes")
@@ -122,8 +253,8 @@ try:
     conn.commit()
     print("  Cleared all existing patients, doctors, appointments")
 
-    # ── STEP 2: Create doctors (20) ───────────────────────────────
-    print("\n[2/5] Creating 20 doctors...")
+    # ── STEP 4: Create doctors (20) ───────────────────────────────
+    print("\n[4/8] Creating 20 doctors...")
     doctor_ids = []
     used_emails = set()
 
@@ -197,8 +328,8 @@ try:
     conn.commit()
     print(f"  Created {len(doctor_ids)} doctors with schedules")
 
-    # ── STEP 3: Create patients (200) ────────────────────────────
-    print("\n[3/5] Creating 200 patients...")
+    # ── STEP 5: Create patients (200) ────────────────────────────
+    print("\n[5/8] Creating 200 patients...")
     patient_ids = []
     used_emails_p = set()
 
@@ -258,8 +389,8 @@ try:
     conn.commit()
     print(f"  Created {len(patient_ids)} patients")
 
-    # ── STEP 4: Create appointments (600) ────────────────────────
-    print("\n[4/5] Creating 600 appointments...")
+    # ── STEP 6: Create appointments (600) ────────────────────────
+    print("\n[6/8] Creating 600 appointments...")
     appt_count = 0
     used_slots  = set()
 
@@ -289,8 +420,8 @@ try:
     conn.commit()
     print(f"  Created {appt_count} appointments")
 
-    # ── STEP 5: Create doctor leaves (60) ────────────────────────
-    print("\n[5/5] Creating doctor leave records...")
+    # ── STEP 7: Create doctor leaves (60) ────────────────────────
+    print("\n[7/8] Creating doctor leave records...")
     leave_count = 0
     today = date.today()
 
@@ -327,6 +458,39 @@ try:
     conn.commit()
     print(f"  Created {leave_count} leave records")
 
+    # ── STEP 8: Seed sample patient feedback + referrals (demo data) ──
+    print("\n[8/8] Seeding sample patient feedback + referrals...")
+
+    cur.execute("SELECT appointment_id, patient_id, doctor_id FROM appointments WHERE status = 'completed'")
+    completed_appts = cur.fetchall()
+
+    feedback_count = 0
+    sample_size = min(150, len(completed_appts))
+    for appt_id, patient_id, doctor_id in random.sample(completed_appts, sample_size):
+        rating  = random.choices(FEEDBACK_RATINGS, FEEDBACK_RATING_WEIGHTS)[0]
+        comment = random.choice(FEEDBACK_COMMENTS)
+        cur.execute("""
+            INSERT INTO patient_feedback (appointment_id, patient_id, doctor_id, rating, comment)
+            VALUES (%s,%s,%s,%s,%s)
+        """, (appt_id, patient_id, doctor_id, rating, comment))
+        feedback_count += 1
+    conn.commit()
+    print(f"  Created {feedback_count} patient feedback ratings")
+
+    referral_count = 0
+    for _ in range(25):
+        patient_id                     = random.choice(patient_ids)
+        referring_id, referred_to_id   = random.sample(doctor_ids, 2)
+        reason                         = random.choice(REFERRAL_REASONS)
+        status                         = random.choice(REFERRAL_STATUSES)
+        cur.execute("""
+            INSERT INTO referrals (patient_id, referring_doctor_id, referred_to_doctor_id, reason, status)
+            VALUES (%s,%s,%s,%s,%s)
+        """, (patient_id, referring_id, referred_to_id, reason, status))
+        referral_count += 1
+    conn.commit()
+    print(f"  Created {referral_count} referrals")
+
     # ── SUMMARY ──────────────────────────────────────────────────
     print("\n" + "=" * 60)
     print("  SEED COMPLETE — MedCore AI")
@@ -340,6 +504,10 @@ try:
     print(f"  Appointments: {cur.fetchone()[0]}")
     cur.execute("SELECT COUNT(*) FROM doctor_leaves")
     print(f"  Leave records: {cur.fetchone()[0]}")
+    cur.execute("SELECT COUNT(*) FROM patient_feedback")
+    print(f"  Feedback ratings: {cur.fetchone()[0]}")
+    cur.execute("SELECT COUNT(*) FROM referrals")
+    print(f"  Referrals   : {cur.fetchone()[0]}")
     cur.execute("SELECT status, COUNT(*) FROM appointments GROUP BY status ORDER BY status")
     print("  Appointment breakdown:")
     for row in cur.fetchall():

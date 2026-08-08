@@ -15,7 +15,7 @@ import {
   CalendarDays, Clock, Plus, Loader2,
   CheckCircle, AlertCircle, Trash2,
   User, ChevronRight, CalendarOff,
-  Calendar, Stethoscope
+  Calendar, Stethoscope, Video, Building2
 } from "lucide-react";
 
 // ── Weekday label helper ──────────────────
@@ -414,6 +414,10 @@ export default function Schedule() {
                             <p className="text-slate-800 text-sm font-semibold">{appt.patient_name}</p>
                             <p className="text-slate-400 text-xs mt-0.5 truncate">"{appt.reason}"</p>
                           </div>
+                          {appt.appointment_type === "Video Consultation"
+                            ? <Video size={14} className="text-sky-400 flex-shrink-0" />
+                            : <Building2 size={14} className="text-slate-300 flex-shrink-0" />
+                          }
                           <div className="text-right flex-shrink-0">
                             <p className="text-slate-600 text-sm font-medium flex items-center gap-1 justify-end">
                               <Clock size={11} />

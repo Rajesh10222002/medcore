@@ -9,14 +9,15 @@ import { showSuccess, showError } from "../../components/shared/Toast";
 import {
   getMyAppointments, getDoctors,
   bookAppointment, getAvailableSlots,
-  cancelAppointment, suggestSpecialty
+  cancelAppointment, suggestSpecialty,
+  getAppointmentTypes, getMyReferrals, submitFeedback
 } from "../../api/api";
 import {
   Calendar, Clock, Plus, X, CheckCircle,
   AlertCircle, Loader2, Stethoscope,
   ChevronLeft, ChevronRight,
   CalendarOff, Heart, Search, Users,
-  Sparkles, Star, RotateCcw
+  Sparkles, Star, RotateCcw, Video, Building2, ArrowRight
 } from "lucide-react";
 
 // ── Status badge ──────────────────────────
@@ -156,6 +157,20 @@ export default function Appointments() {
   const [suggesting,     setSuggesting]     = useState(false);
   const [suggestion,     setSuggestion]     = useState(null);
 
+  // ── Appointment type (in-person / video) ──
+  const [appointmentTypes, setAppointmentTypes] = useState([]);
+  const [selectedTypeId,   setSelectedTypeId]   = useState(null);
+
+  // ── Referrals ──
+  const [referrals, setReferrals] = useState([]);
+  const [dismissedDeclines, setDismissedDeclines] = useState([]);
+
+  // ── Feedback ──
+  const [feedbackAppt,     setFeedbackAppt]     = useState(null);
+  const [feedbackRating,   setFeedbackRating]   = useState(0);
+  const [feedbackComment,  setFeedbackComment]  = useState("");
+  const [submittingFeedback, setSubmittingFeedback] = useState(false);
+
   // ── Favorite doctors (local, per logged-in patient) ──
   const favKey = `medcore_fav_doctors_${user?.name || "guest"}`;
   const [favorites, setFavorites] = useState(() => {
@@ -178,9 +193,15 @@ export default function Appointments() {
   const loadData = async () => {
     try {
       setLoading(true);
-      const [aRes, dRes] = await Promise.all([getMyAppointments(), getDoctors()]);
+      const [aRes, dRes, tRes, rRes] = await Promise.all([
+        getMyAppointments(), getDoctors(), getAppointmentTypes(), getMyReferrals()
+      ]);
       setAppointments(aRes.data);
       setDoctors(dRes.data);
+      setAppointmentTypes(tRes.data);
+      setReferrals(rRes.data);
+      const inPerson = tRes.data.find(t => t.name === "In-Person");
+      if (inPerson) setSelectedTypeId(inPerson.type_id);
     } catch {
       showError("Failed to load appointments");
     } finally {
@@ -217,7 +238,8 @@ export default function Appointments() {
       await bookAppointment({
         doctor_id:        selectedDoc.doctor_id,
         appointment_date: selectedSlot.datetime,
-        reason
+        reason,
+        type_id:          selectedTypeId
       });
       showSuccess(`Booked with Dr. ${selectedDoc.last_name} on ${
         selectedDate.toLocaleDateString("en-IN", { day: "numeric", month: "long" })
@@ -241,6 +263,41 @@ export default function Appointments() {
     setLeaveBlocked(false); setBookError(""); setJustBooked(false);
     setDoctorSearch(""); setSpecialtyFilter("all");
     setShowSymptomBox(false); setSymptoms(""); setSuggestion(null);
+    const inPerson = appointmentTypes.find(t => t.name === "In-Person");
+    setSelectedTypeId(inPerson ? inPerson.type_id : null);
+  };
+
+  const handleBookReferral = (referral) => {
+    const doc = doctors.find(d => d.doctor_id === referral.referred_to_doctor_id);
+    if (!doc) { showError("This doctor is no longer available"); return; }
+    resetForm();
+    setSelectedDoc(doc);
+    setStep(2);
+    setShowForm(true);
+  };
+
+  const openFeedback = (appt) => {
+    setFeedbackAppt(appt);
+    setFeedbackRating(0);
+    setFeedbackComment("");
+  };
+
+  const handleSubmitFeedback = async () => {
+    if (!feedbackAppt || feedbackRating < 1) return;
+    setSubmittingFeedback(true);
+    try {
+      await submitFeedback(feedbackAppt.appointment_id, {
+        rating: feedbackRating,
+        comment: feedbackComment
+      });
+      showSuccess("Thanks for your feedback!");
+      setFeedbackAppt(null);
+      loadData();
+    } catch (err) {
+      showError(err.response?.data?.error || "Failed to submit feedback");
+    } finally {
+      setSubmittingFeedback(false);
+    }
   };
 
   const handleSuggestSpecialty = async () => {
@@ -415,6 +472,68 @@ export default function Appointments() {
         </motion.div>
       )}
 
+      {/* ── Referral banners ── */}
+      {referrals.filter(r => r.status === "pending" || r.status === "accepted").map(r => (
+        <motion.div
+          key={r.referral_id}
+          initial={{ opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="flex items-center gap-3 p-4 rounded-2xl mb-4"
+          style={{ background: "rgba(245,158,11,0.06)", border: "1px solid rgba(245,158,11,0.2)" }}
+        >
+          <div className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0"
+            style={{ background: "rgba(245,158,11,0.15)" }}>
+            <ArrowRight size={16} className="text-amber-600" />
+          </div>
+          <div className="flex-1 min-w-0">
+            <p className="text-sm text-slate-700">
+              <span className="font-bold">Dr. {r.referring_doctor_name}</span> has referred you to{" "}
+              <span className="font-bold">Dr. {r.referred_to_doctor_name}</span>
+              {r.referred_to_specialization && ` (${r.referred_to_specialization})`}
+            </p>
+            {r.reason && <p className="text-slate-400 text-xs mt-0.5 italic truncate">"{r.reason}"</p>}
+          </div>
+          <button
+            onClick={() => handleBookReferral(r)}
+            className="flex-shrink-0 px-3.5 py-2 text-xs font-bold rounded-xl text-white transition-all"
+            style={{ background: "linear-gradient(135deg, #2176AE, #1A4A7A)" }}
+          >
+            Book Appointment
+          </button>
+        </motion.div>
+      ))}
+
+      {referrals
+        .filter(r => r.status === "declined" && !dismissedDeclines.includes(r.referral_id))
+        .map(r => (
+          <motion.div
+            key={r.referral_id}
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="flex items-center gap-3 p-4 rounded-2xl mb-4 bg-slate-50 border border-slate-200"
+          >
+            <div className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0 bg-slate-200">
+              <X size={16} className="text-slate-500" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="text-sm text-slate-700">
+                <span className="font-bold">Dr. {r.referred_to_doctor_name}</span> was unable to accept the referral from{" "}
+                <span className="font-bold">Dr. {r.referring_doctor_name}</span>
+              </p>
+              <p className="text-slate-400 text-xs mt-0.5">
+                {r.decline_reason ? `"${r.decline_reason}"` : "No reason given"} — you can still book directly if you'd like.
+              </p>
+            </div>
+            <button
+              onClick={() => setDismissedDeclines(prev => [...prev, r.referral_id])}
+              aria-label="Dismiss"
+              className="flex-shrink-0 w-7 h-7 flex items-center justify-center rounded-lg hover:bg-slate-200 transition-colors"
+            >
+              <X size={14} className="text-slate-400" />
+            </button>
+          </motion.div>
+        ))}
+
       {/* ── Tabs + list ── */}
       <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden">
 
@@ -506,7 +625,13 @@ export default function Appointments() {
                           <p className="text-slate-800 text-sm font-bold">Dr. {appt.doctor_name}</p>
                           <StatusBadge status={appt.status} />
                         </div>
-                        <p className="text-slate-400 text-xs mt-0.5">{appt.specialization}</p>
+                        <p className="text-slate-400 text-xs mt-0.5 flex items-center gap-1.5">
+                          {appt.specialization}
+                          <span className="inline-flex items-center gap-0.5 text-slate-300">
+                            {appt.appointment_type === "Video Consultation" ? <Video size={10} /> : <Building2 size={10} />}
+                            {appt.appointment_type}
+                          </span>
+                        </p>
                         <p className="text-slate-500 text-xs mt-1 italic truncate">"{appt.reason}"</p>
                       </div>
 
@@ -558,6 +683,14 @@ export default function Appointments() {
                           {new Date(appt.appointment_date).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })}
                         </p>
                         <StatusBadge status={appt.status} />
+                        {appt.status === "completed" && !appt.has_feedback && (
+                          <button
+                            onClick={() => openFeedback(appt)}
+                            className="flex items-center gap-1 text-[11px] font-semibold hover:underline ml-auto text-amber-500"
+                          >
+                            <Star size={10} /> Rate your visit
+                          </button>
+                        )}
                         <button
                           onClick={() => handleBookAgain(appt)}
                           className="flex items-center gap-1 text-[11px] font-semibold hover:underline ml-auto"
@@ -1026,6 +1159,32 @@ export default function Appointments() {
                       </div>
                     </div>
 
+                    {/* Appointment type */}
+                    {appointmentTypes.length > 0 && (
+                      <div className="mb-4">
+                        <label className="block text-xs font-bold text-slate-600 mb-2 uppercase tracking-wide">
+                          Consultation Type
+                        </label>
+                        <div className="grid grid-cols-2 gap-2">
+                          {appointmentTypes.map(t => (
+                            <button
+                              key={t.type_id}
+                              onClick={() => setSelectedTypeId(t.type_id)}
+                              className={`flex items-center justify-center gap-2 py-2.5 rounded-xl text-xs font-bold transition-all border ${
+                                selectedTypeId === t.type_id
+                                  ? "text-white border-transparent"
+                                  : "text-slate-500 border-slate-200 bg-white hover:border-sky-300"
+                              }`}
+                              style={selectedTypeId === t.type_id ? { background: "linear-gradient(135deg, #2176AE, #1A4A7A)" } : {}}
+                            >
+                              {t.name === "Video Consultation" ? <Video size={14} /> : <Building2 size={14} />}
+                              {t.name}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
                     {/* Reason */}
                     <div className="mb-4">
                       <label className="block text-xs font-bold text-slate-600 mb-2 uppercase tracking-wide">
@@ -1099,6 +1258,64 @@ export default function Appointments() {
                   {cancelling
                     ? <><Loader2 size={14} className="animate-spin" /> Cancelling...</>
                     : "Yes, Cancel"
+                  }
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* ── FEEDBACK MODAL ── */}
+      <AnimatePresence>
+        {feedbackAppt && (
+          <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 px-4">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="bg-white rounded-3xl shadow-2xl w-full max-w-sm p-6"
+            >
+              <h3 className="font-bold text-slate-800 text-lg mb-1">Rate your visit</h3>
+              <p className="text-slate-400 text-sm mb-5">
+                Dr. {feedbackAppt.doctor_name} · {new Date(feedbackAppt.appointment_date).toLocaleDateString("en-IN", { day: "numeric", month: "short" })}
+              </p>
+
+              <div className="flex items-center justify-center gap-2 mb-5">
+                {[1, 2, 3, 4, 5].map(n => (
+                  <button key={n} onClick={() => setFeedbackRating(n)} aria-label={`${n} star`}>
+                    <Star
+                      size={28}
+                      className={n <= feedbackRating ? "text-amber-400 fill-amber-400" : "text-slate-200"}
+                    />
+                  </button>
+                ))}
+              </div>
+
+              <textarea
+                rows={3}
+                placeholder="Optional comment..."
+                value={feedbackComment}
+                onChange={e => setFeedbackComment(e.target.value)}
+                className="w-full px-3 py-2.5 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-sky-400 bg-slate-50 resize-none mb-4"
+              />
+
+              <div className="flex gap-3">
+                <button
+                  onClick={() => setFeedbackAppt(null)}
+                  className="flex-1 py-3 border border-slate-200 text-slate-600 text-sm font-semibold rounded-2xl hover:bg-slate-50 transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleSubmitFeedback}
+                  disabled={submittingFeedback || feedbackRating < 1}
+                  className="flex-1 py-3 text-white text-sm font-bold rounded-2xl transition-colors flex items-center justify-center gap-2 disabled:opacity-50"
+                  style={{ background: "linear-gradient(135deg, #2176AE, #1A4A7A)" }}
+                >
+                  {submittingFeedback
+                    ? <><Loader2 size={14} className="animate-spin" /> Submitting...</>
+                    : "Submit"
                   }
                 </button>
               </div>

@@ -76,3 +76,24 @@ export const addLeave            = (data)     => axios.post(`${BASE}/doctor/sche
 export const deleteLeave         = (id)       => axios.delete(`${BASE}/doctor/schedule/leave/${id}`);
 
 export const adminNLQuery = (data) => axios.post(`${BASE}/admin/nl-query`, data);
+
+// ── SPECIALTIES ────────────────────────────────────────
+export const getSpecialties  = ()     => axios.get(`${BASE}/admin/specialties`);
+export const createSpecialty = (data) => axios.post(`${BASE}/admin/specialties`, data);
+
+// ── APPOINTMENT TYPES ──────────────────────────────────
+export const getAppointmentTypes = () => axios.get(`${BASE}/appointment-types`);
+
+// ── PATIENT FEEDBACK ───────────────────────────────────
+export const submitFeedback       = (appointmentId, data) =>
+  axios.post(`${BASE}/patients/appointments/${appointmentId}/feedback`, data);
+export const getMyDoctorFeedback  = ()   => axios.get(`${BASE}/doctor/me/feedback`);
+export const getAdminDoctorFeedback = (id) => axios.get(`${BASE}/admin/doctors/${id}/feedback`);
+
+// ── REFERRALS ──────────────────────────────────────────
+export const createReferral         = (patientId, data) =>
+  axios.post(`${BASE}/doctor/patients/${patientId}/referrals`, data);
+export const getIncomingReferrals   = ()   => axios.get(`${BASE}/doctor/referrals/incoming`);
+export const acceptReferral         = (id) => axios.put(`${BASE}/doctor/referrals/${id}/accept`);
+export const declineReferral        = (id, data) => axios.put(`${BASE}/doctor/referrals/${id}/decline`, data);
+export const getMyReferrals         = ()   => axios.get(`${BASE}/patients/me/referrals`);

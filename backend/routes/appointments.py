@@ -30,8 +30,24 @@ def get_my_appointments():
         WHERE status = 'scheduled'
         AND appointment_date < NOW()
         AND patient_id = %s
+        RETURNING appointment_id, doctor_id
     """, (patient_id,))
+    just_completed = cur.fetchall()
     conn.commit()
+
+    # Close the loop on any pending/accepted referral for this patient+doctor pair
+    if just_completed:
+        try:
+            for _, doctor_id in just_completed:
+                cur.execute("""
+                    UPDATE referrals SET status = 'completed'
+                    WHERE patient_id = %s AND referred_to_doctor_id = %s
+                    AND status IN ('pending', 'accepted')
+                """, (patient_id, doctor_id))
+            conn.commit()
+        except Exception as ref_err:
+            print(f"Referral completion error: {ref_err}")
+            conn.rollback()
 
     try:
         cur.execute("""
@@ -43,9 +59,12 @@ def get_my_appointments():
                 a.no_show_risk,
                 d.first_name || ' ' || d.last_name AS doctor_name,
                 d.specialization,
-                a.doctor_id
+                a.doctor_id,
+                COALESCE(t.name, 'In-Person') AS appointment_type,
+                EXISTS(SELECT 1 FROM patient_feedback f WHERE f.appointment_id = a.appointment_id) AS has_feedback
             FROM appointments a
             JOIN doctors d ON a.doctor_id = d.doctor_id
+            LEFT JOIN appointment_types t ON a.type_id = t.type_id
             WHERE a.patient_id = %s
             ORDER BY a.appointment_date DESC
         """, (patient_id,))
@@ -58,7 +77,9 @@ def get_my_appointments():
             "no_show_risk":     float(r[4]) if r[4] else None,
             "doctor_name":      r[5],
             "specialization":   r[6],
-            "doctor_id":        r[7]
+            "doctor_id":        r[7],
+            "appointment_type": r[8],
+            "has_feedback":     r[9]
         } for r in rows]), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -124,16 +145,27 @@ def book_appointment():
         # Placeholder no-show risk — ML model added later
         no_show_risk = 25.0
 
+        # Appointment type — defaults to In-Person if not given/invalid
+        type_id = data.get("type_id")
+        if type_id:
+            cur.execute("SELECT type_id FROM appointment_types WHERE type_id = %s", (type_id,))
+            if not cur.fetchone():
+                type_id = None
+        if not type_id:
+            cur.execute("SELECT type_id FROM appointment_types WHERE name = 'In-Person'")
+            row = cur.fetchone()
+            type_id = row[0] if row else None
+
         cur.execute("""
             INSERT INTO appointments
             (patient_id, doctor_id, appointment_date,
-             status, reason, no_show_risk)
-            VALUES (%s, %s, %s, 'scheduled', %s, %s)
+             status, reason, no_show_risk, type_id)
+            VALUES (%s, %s, %s, 'scheduled', %s, %s, %s)
             RETURNING appointment_id
         """, (
             patient_id, data["doctor_id"],
             data["appointment_date"],
-            data["reason"], no_show_risk
+            data["reason"], no_show_risk, type_id
         ))
         appointment_id = cur.fetchone()[0]
 
@@ -358,6 +390,87 @@ def get_slots():
         }), 200
 
     except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    finally:
+        cur.close()
+        conn.close()
+
+
+# ─────────────────────────────────────────
+# GET /api/appointment-types
+# ─────────────────────────────────────────
+@appointments_bp.route("/appointment-types", methods=["GET"])
+@token_required
+def get_appointment_types():
+    conn = get_db()
+    cur  = conn.cursor()
+    try:
+        cur.execute("""
+            SELECT type_id, name, duration_mins
+            FROM appointment_types WHERE is_active = TRUE ORDER BY type_id
+        """)
+        return jsonify([{
+            "type_id":       r[0],
+            "name":          r[1],
+            "duration_mins": r[2]
+        } for r in cur.fetchall()]), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    finally:
+        cur.close()
+        conn.close()
+
+
+# ─────────────────────────────────────────
+# POST /api/patients/appointments/:id/feedback
+# Patient rates a completed appointment
+# ─────────────────────────────────────────
+@appointments_bp.route("/patients/appointments/<int:appointment_id>/feedback", methods=["POST"])
+@token_required
+@role_required(["patient"])
+def submit_feedback(appointment_id):
+    data       = request.json
+    patient_id = request.user.get("patient_id")
+    rating     = data.get("rating")
+    comment    = (data.get("comment") or "").strip()
+
+    if not rating or not (1 <= int(rating) <= 5):
+        return jsonify({"error": "rating must be between 1 and 5"}), 400
+
+    conn = get_db()
+    cur  = conn.cursor()
+    try:
+        cur.execute("""
+            SELECT doctor_id, status FROM appointments
+            WHERE appointment_id = %s AND patient_id = %s
+        """, (appointment_id, patient_id))
+        appt = cur.fetchone()
+        if not appt:
+            return jsonify({"error": "Appointment not found"}), 404
+        if appt[1] != "completed":
+            return jsonify({"error": "Can only rate completed appointments"}), 400
+
+        cur.execute(
+            "SELECT feedback_id FROM patient_feedback WHERE appointment_id = %s",
+            (appointment_id,)
+        )
+        if cur.fetchone():
+            return jsonify({"error": "Feedback already submitted for this appointment"}), 409
+
+        cur.execute("""
+            INSERT INTO patient_feedback
+            (appointment_id, patient_id, doctor_id, rating, comment)
+            VALUES (%s, %s, %s, %s, %s)
+            RETURNING feedback_id
+        """, (appointment_id, patient_id, appt[0], int(rating), comment))
+        feedback_id = cur.fetchone()[0]
+        conn.commit()
+        return jsonify({
+            "message":     "Thanks for your feedback!",
+            "feedback_id": feedback_id
+        }), 201
+    except Exception as e:
+        conn.rollback()
         return jsonify({"error": str(e)}), 500
     finally:
         cur.close()
