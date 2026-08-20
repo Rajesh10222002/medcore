@@ -20,6 +20,8 @@
 # MAGIC - `silver.appointments` — status updates overwrite
 # MAGIC - `silver.users` — auth state only
 # MAGIC - `silver.doctor_leaves` — immutable events
+# MAGIC - `silver.admins`, `silver.clinical_notes`, `silver.ai_predictions` — lookup/event tables added
+# MAGIC   after discovering they were missing from the original Bronze `TABLE_CONFIG`
 # MAGIC
 # MAGIC **Derived analytical views (rebuilt each run):**
 # MAGIC - `silver.patient_appointment_summary`
@@ -94,6 +96,9 @@ br_specialties  = spark.table(f"{CATALOG}.bronze.specialties")
 br_feedback     = spark.table(f"{CATALOG}.bronze.patient_feedback")
 br_referrals    = spark.table(f"{CATALOG}.bronze.referrals")
 br_appt_types   = spark.table(f"{CATALOG}.bronze.appointment_types")
+br_admins          = spark.table(f"{CATALOG}.bronze.admins")
+br_clinical_notes  = spark.table(f"{CATALOG}.bronze.clinical_notes")
+br_ai_predictions  = spark.table(f"{CATALOG}.bronze.ai_predictions")
 
 for name, df in [
     ("patients",         br_patients),
@@ -421,7 +426,7 @@ spark.table(table_name).select(
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ### Step 9 — Silver: users, doctor_leaves, specialties, patient_feedback, referrals, appointment_types (Type 1 MERGE)
+# MAGIC ### Step 9 — Silver: users, doctor_leaves, specialties, patient_feedback, referrals, appointment_types, admins, clinical_notes, ai_predictions (Type 1 MERGE)
 
 # COMMAND ----------
 
@@ -432,6 +437,9 @@ for table_name, df, pk in [
     (f"{CATALOG}.silver.patient_feedback",  br_feedback,    "feedback_id"),
     (f"{CATALOG}.silver.referrals",         br_referrals,   "referral_id"),
     (f"{CATALOG}.silver.appointment_types", br_appt_types,  "type_id"),
+    (f"{CATALOG}.silver.admins",           br_admins,          "admin_id"),
+    (f"{CATALOG}.silver.clinical_notes",   br_clinical_notes,  "note_id"),
+    (f"{CATALOG}.silver.ai_predictions",   br_ai_predictions,  "prediction_id"),
 ]:
     clean_df = df.drop("source_system", "ingested_at", "pipeline_run_id")
     exists   = spark.catalog.tableExists(table_name)
@@ -750,6 +758,9 @@ SILVER_TABLES = [
     (f"{CATALOG}.silver.patient_feedback",             "Type 1 MERGE"),
     (f"{CATALOG}.silver.referrals",                    "Type 1 MERGE"),
     (f"{CATALOG}.silver.appointment_types",            "Type 1 MERGE"),
+    (f"{CATALOG}.silver.admins",                       "Type 1 MERGE"),
+    (f"{CATALOG}.silver.clinical_notes",               "Type 1 MERGE"),
+    (f"{CATALOG}.silver.ai_predictions",               "Type 1 MERGE"),
     (f"{CATALOG}.silver.patient_appointment_summary", "Derived view"),
     (f"{CATALOG}.silver.doctor_performance_summary",  "Derived view"),
     (f"{CATALOG}.silver.fhir_patients",               "Type 1 MERGE (FHIR)"),
@@ -852,8 +863,9 @@ print(f"  Overall SCD integrity : {'ALL CHECKS PASSED' if all_passed else 'FAILU
 # MAGIC %md
 # MAGIC ## Silver layer complete
 # MAGIC
-# MAGIC Up to 16 tables loaded into `{CATALOG}.silver` (8 Neon-sourced + 8 FHIR-sourced —
-# MAGIC the FHIR ones only appear once `bronze_fhir_ingest` has found matching data).
+# MAGIC Up to 22 tables loaded into `{CATALOG}.silver` (11 Neon-sourced + 3 more Neon lookup/event
+# MAGIC tables + 8 FHIR-sourced — the FHIR ones only appear once `bronze_fhir_ingest` has found
+# MAGIC matching data).
 # MAGIC
 # MAGIC | Table | Pattern | Key columns added |
 # MAGIC |---|---|---|
@@ -863,6 +875,9 @@ print(f"  Overall SCD integrity : {'ALL CHECKS PASSED' if all_passed else 'FAILU
 # MAGIC | `silver.appointments` | Type 1 MERGE | appt_hour, appt_day_of_week, flags, risk_category |
 # MAGIC | `silver.users` | Type 1 MERGE | — |
 # MAGIC | `silver.doctor_leaves` | Type 1 MERGE | — |
+# MAGIC | `silver.admins` | Type 1 MERGE | — |
+# MAGIC | `silver.clinical_notes` | Type 1 MERGE | — |
+# MAGIC | `silver.ai_predictions` | Type 1 MERGE | Neon's live copy of model predictions — one run behind `gold.fact_predictions`, useful as an audit trail |
 # MAGIC | `silver.patient_appointment_summary` | Derived | visit_frequency, cancellation_rate, avg_no_show_risk, diagnosis_count, active_medication_count, allergy_count |
 # MAGIC | `silver.doctor_performance_summary` | Derived | workload_category, cancellation_rate |
 # MAGIC | `silver.fhir_patients` | Type 1 MERGE (FHIR) | — |

@@ -10,7 +10,7 @@
 # MAGIC | **Layer** | Bronze — raw copy from source |
 # MAGIC | **Source** | Neon PostgreSQL (production DB) |
 # MAGIC | **Method** | Spark JDBC + Delta MERGE (incremental CDC pattern) |
-# MAGIC | **Tables** | users · patients · doctors · appointments · doctor_schedules · doctor_leaves |
+# MAGIC | **Tables** | users · patients · doctors · appointments · doctor_schedules · doctor_leaves · specialties · patient_feedback · referrals · appointment_types · admins · clinical_notes · ai_predictions |
 # MAGIC
 # MAGIC **How it works:**
 # MAGIC 1. Connect to Neon via JDBC (no pip installs — native Spark driver)
@@ -108,6 +108,9 @@ TABLE_CONFIG = {
     "patient_feedback":  "feedback_id",
     "referrals":         "referral_id",
     "appointment_types": "type_id",
+    "admins":            "admin_id",
+    "clinical_notes":    "note_id",
+    "ai_predictions":    "prediction_id",
 }
 
 def read_from_neon(table_name):
@@ -132,7 +135,7 @@ print(f"  Tables to ingest: {list(TABLE_CONFIG.keys())}")
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ### Step 4 — Extract all 10 tables from Neon
+# MAGIC ### Step 4 — Extract all 13 tables from Neon
 # MAGIC
 # MAGIC Each table is read via JDBC and enriched with 3 Bronze metadata columns:
 # MAGIC
