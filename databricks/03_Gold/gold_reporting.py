@@ -37,6 +37,7 @@
 # MAGIC | `gold.fact_appointments` | 1 row per appointment |
 # MAGIC | `gold.fact_referrals` | 1 row per referral |
 # MAGIC | `gold.fact_patient_feedback` | 1 row per feedback rating |
+# MAGIC | `gold.fact_clinical_notes` | 1 row per clinical note |
 # MAGIC | `gold.fact_predictions` | 1 row per (patient, model) prediction — written by `04_ML_Training`, not this notebook |
 # MAGIC
 # MAGIC **Aggregates (pre-computed rollups, 1 row per entity):**
@@ -307,7 +308,33 @@ else:
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ### Step 9 — `gold.agg_patient_summary` and `gold.agg_doctor_performance`
+# MAGIC ### Step 9 — `gold.fact_clinical_notes`
+# MAGIC
+# MAGIC `admins` and `ai_predictions` (also in Silver as of this pipeline) are deliberately **not**
+# MAGIC turned into Gold tables: `admins` is an internal auth-adjacent table with no reporting
+# MAGIC value, and `ai_predictions` is Neon's own copy of the exact same predictions
+# MAGIC `04_ML_Training` already writes into `gold.fact_predictions` — building a second Gold fact
+# MAGIC from it would just be a lagged duplicate, not new information.
+
+# COMMAND ----------
+
+if table_exists("silver", "clinical_notes"):
+    fact_clinical_notes_df = (
+        spark.table(f"{CATALOG}.silver.clinical_notes")
+        .withColumn("date_key", to_date(col("created_at")))
+        .select("note_id", "patient_id", "doctor_id", "note_text", "note_type", "date_key")
+    )
+    save_gold_table(
+        fact_clinical_notes_df, "fact_clinical_notes",
+        "Clinical documentation fact, 1 row per note. Joins to dim_patients, dim_doctors, dim_date."
+    )
+else:
+    print("  [SKIPPED]  fact_clinical_notes — silver.clinical_notes not found")
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ### Step 10 — `gold.agg_patient_summary` and `gold.agg_doctor_performance`
 # MAGIC
 # MAGIC Silver already built these as derived analytical views (they're the input to the ML
 # MAGIC feature store too). Gold re-publishes them under the reporting schema so a report author
@@ -330,7 +357,7 @@ save_gold_table(
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ### Step 10 — Verify all Gold tables
+# MAGIC ### Step 11 — Verify all Gold tables
 # MAGIC
 # MAGIC `fact_predictions` is written by `04_ML_Training`, not this notebook — it'll show as
 # MAGIC "not built yet" until that notebook has run once. That's expected on a first pass through
@@ -340,7 +367,7 @@ save_gold_table(
 
 GOLD_TABLES = [
     "dim_date", "dim_patients", "dim_doctors", "dim_specialties", "dim_appointment_types",
-    "fact_appointments", "fact_referrals", "fact_patient_feedback",
+    "fact_appointments", "fact_referrals", "fact_patient_feedback", "fact_clinical_notes",
     "agg_patient_summary", "agg_doctor_performance", "fact_predictions",
 ]
 

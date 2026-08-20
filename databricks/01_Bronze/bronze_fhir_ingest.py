@@ -380,12 +380,20 @@ clinical_impression_rows = collected["clinical_impression_rows"]
 
 # COMMAND ----------
 
-from pyspark.sql.types import StructType, StructField, StringType
+from pyspark.sql.types import StructType, StructField, StringType, BooleanType
 
 # Explicit schemas — required because some fields (e.g. Patient.active) are never set
 # by this app's FHIR-write endpoints, so every row has None there. Without an explicit
 # schema, Spark tries to *infer* each column's type from the data and throws
 # CANNOT_DETERMINE_TYPE when a column is 100% None with nothing to infer from.
+#
+# `active` is BooleanType, not StringType — it comes straight from the FHIR
+# resource's own JSON boolean (resource.get("active")), and the existing
+# medcore.bronze.fhir_patients/fhir_practitioners tables already have it typed
+# that way. Declaring it as StringType here caused
+# DELTA_FAILED_TO_MERGE_FIELDS on every MERGE against those tables — Delta's
+# schema evolution can add columns but won't silently reconcile an existing
+# column's type against an incompatible incoming type.
 FHIR_SCHEMAS = {
     "fhir_patients": StructType([
         StructField("patient_fhir_id", StringType()),
@@ -393,14 +401,14 @@ FHIR_SCHEMAS = {
         StructField("family_name", StringType()),
         StructField("birth_date", StringType()),
         StructField("gender", StringType()),
-        StructField("active", StringType()),
+        StructField("active", BooleanType()),
     ]),
     "fhir_practitioners": StructType([
         StructField("practitioner_fhir_id", StringType()),
         StructField("given_name", StringType()),
         StructField("family_name", StringType()),
         StructField("specialization", StringType()),
-        StructField("active", StringType()),
+        StructField("active", BooleanType()),
     ]),
     "fhir_conditions": StructType([
         StructField("condition_id", StringType()),
