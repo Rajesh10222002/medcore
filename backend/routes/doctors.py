@@ -1130,3 +1130,46 @@ def decline_referral(referral_id):
     finally:
         cur.close()
         conn.close()
+
+
+# ─────────────────────────────────────────
+# GET /api/doctor/patients/:id/risk
+# ML risk predictions (Databricks-trained, ai_predictions table)
+# ─────────────────────────────────────────
+@doctors_bp.route("/doctor/patients/<int:patient_id>/risk", methods=["GET"])
+@token_required
+@role_required(["doctor"])
+def get_patient_risk(patient_id):
+    conn = get_db()
+    cur  = conn.cursor()
+    try:
+        cur.execute("""
+            SELECT prediction_type, prediction_result, confidence_score, created_at
+            FROM ai_predictions WHERE patient_id = %s
+        """, (patient_id,))
+        rows = cur.fetchall()
+        if not rows:
+            return jsonify({"has_predictions": False}), 200
+
+        by_type = {r[0]: r for r in rows}
+
+        def binary_risk(row):
+            if not row:
+                return None
+            return {
+                "level":       "High" if row[1] == "1" else "Low",
+                "probability": float(row[2]) if row[2] is not None else None
+            }
+
+        cluster_row = by_type.get("patient_clustering_kmeans")
+        return jsonify({
+            "has_predictions":  True,
+            "readmission_risk": binary_risk(by_type.get("readmission_random_forest")),
+            "no_show_risk":     binary_risk(by_type.get("no_show_random_forest")),
+            "risk_tier":        cluster_row[1] if cluster_row else None,
+            "generated_at":     str(rows[0][3])
+        }), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    finally:
+        cur.close()

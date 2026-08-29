@@ -13,6 +13,7 @@ import {
   setBloodGroup, getBloodGroup,
   getSpecialties, getDoctors, createReferral
 } from "../../api/api";
+import RiskPredictionCard from "../../components/RiskPredictionCard";
 import { showSuccess, showError } from "../../components/shared/Toast";
 import {
   ArrowLeft, FileText, Pill,
@@ -494,6 +495,14 @@ export default function PatientDetail() {
           </p>
         )}
       </motion.div>
+
+      <div className="mb-6">
+        <RiskPredictionCard
+          patientId={id}
+          role="doctor"
+          apiBaseUrl={import.meta.env.VITE_API_URL}
+        />
+      </div>
 
       {/* ── VITALS SECTION ── */}
       <div className="bg-white rounded-2xl border border-slate-100 shadow-sm mb-6">
