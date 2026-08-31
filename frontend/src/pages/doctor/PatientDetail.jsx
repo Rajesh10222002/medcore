@@ -42,6 +42,13 @@ const BACK_TARGETS = {
   dashboard: { to: "/doctor",           label: "Back to Dashboard" },
 };
 
+// mild is deliberately a lighter, less alarming treatment than moderate/severe
+const SEVERITY_STYLES = {
+  severe:   { bg: "bg-red-50",   border: "border-red-100",   text: "text-red-700",   badgeBg: "bg-red-100",    badgeText: "text-red-700"   },
+  moderate: { bg: "bg-amber-50", border: "border-amber-100", text: "text-amber-700", badgeBg: "bg-amber-100",  badgeText: "text-amber-700" },
+  mild:     { bg: "bg-slate-50", border: "border-slate-200", text: "text-slate-600", badgeBg: "bg-slate-200",  badgeText: "text-slate-600" },
+};
+
 export default function PatientDetail() {
   const { id }   = useParams();
   const navigate = useNavigate();
@@ -111,6 +118,22 @@ export default function PatientDetail() {
         .catch(() => {});
     }
   }, [id]);
+
+  // Auto-run drug interaction check once 2+ active medications are on record —
+  // no button, appears like an alert. Ollama calls take 5-15s, so this can be
+  // slow; on any failure we fail soft (hide the panel, no error UI).
+  useEffect(() => {
+    const activeMeds = (patient?.fhir?.medications || []).filter(m => m.status === "active");
+    if (activeMeds.length < 2) {
+      setDrugCheck(null);
+      return;
+    }
+    setCheckingDrugs(true);
+    checkDrugInteractions({ medications: activeMeds.map(m => m.name) })
+      .then(res => setDrugCheck(res.data))
+      .catch(() => setDrugCheck(null))
+      .finally(() => setCheckingDrugs(false));
+  }, [patient]);
 
   const loadPatient = async () => {
     try {
@@ -264,20 +287,6 @@ export default function PatientDetail() {
       setAiSummary("Unable to generate summary.");
     } finally {
       setLoadingSummary(false);
-    }
-  };
-
-  const checkDrugs = async () => {
-    if (!patient?.fhir?.medications?.length) return;
-    setCheckingDrugs(true);
-    try {
-      const meds = patient.fhir.medications.map(m => m.name);
-      const res  = await checkDrugInteractions({ medications: meds });
-      setDrugCheck(res.data);
-    } catch {
-      showError("Drug check unavailable");
-    } finally {
-      setCheckingDrugs(false);
     }
   };
 
@@ -709,28 +718,24 @@ export default function PatientDetail() {
           </div>
         </div>
 
-        {/* Drug checker */}
-        {patient?.fhir?.medications?.length >= 2 && (
+        {/* Drug interaction checker — auto-runs on load, no button.
+            Renders nothing while below 2 active meds, and nothing on
+            failure (fail soft) — only shows once there's something to show. */}
+        {(checkingDrugs || drugCheck) && (
           <div className="bg-white rounded-2xl border border-slate-100 shadow-sm col-span-2">
-            <div className="flex items-center justify-between p-5 border-b border-slate-100">
-              <div className="flex items-center gap-3">
-                <div className="w-8 h-8 bg-amber-50 rounded-lg flex items-center justify-center">
-                  <ShieldAlert size={16} className="text-amber-600" />
-                </div>
-                <h3 className="font-semibold text-slate-800">Drug Interaction Check</h3>
+            <div className="flex items-center gap-3 p-5 border-b border-slate-100">
+              <div className="w-8 h-8 bg-amber-50 rounded-lg flex items-center justify-center">
+                <ShieldAlert size={16} className="text-amber-600" />
               </div>
-              <button
-                onClick={checkDrugs}
-                disabled={checkingDrugs}
-                className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-50 hover:bg-amber-100 text-amber-700 text-xs font-medium rounded-lg transition-colors disabled:opacity-50"
-              >
-                {checkingDrugs
-                  ? <><Loader2 size={12} className="animate-spin" /> Checking...</>
-                  : <><ShieldAlert size={12} /> Check Interactions</>
-                }
-              </button>
+              <h3 className="font-semibold text-slate-800">Drug Interaction Check</h3>
+              {checkingDrugs && <Loader2 size={14} className="animate-spin text-slate-400 ml-1" />}
             </div>
-            {drugCheck && (
+            {checkingDrugs ? (
+              <div className="p-4 space-y-2">
+                <div className="h-12 bg-slate-50 rounded-xl animate-pulse" />
+                <div className="h-12 bg-slate-50 rounded-xl animate-pulse w-4/5" />
+              </div>
+            ) : (
               <div className="p-4 space-y-2">
                 {drugCheck.safe ? (
                   <div className="flex items-center gap-2 bg-green-50 border border-green-100 rounded-xl p-3">
@@ -743,19 +748,20 @@ export default function PatientDetail() {
                       <AlertCircle size={16} className="text-red-600 flex-shrink-0" />
                       <p className="text-red-700 text-sm font-medium">{drugCheck.summary}</p>
                     </div>
-                    {drugCheck.interactions?.map((inter, i) => (
-                      <div key={i} className="bg-amber-50 border border-amber-100 rounded-xl p-3">
-                        <p className="text-amber-800 text-sm font-medium">{inter.drugs}</p>
-                        <p className="text-amber-600 text-xs mt-1">{inter.description}</p>
-                        <span className={`inline-block mt-1.5 px-2 py-0.5 rounded-full text-xs font-medium ${
-                          inter.severity === "severe"   ? "bg-red-100 text-red-600"
-                          : inter.severity === "moderate" ? "bg-amber-100 text-amber-700"
-                          : "bg-yellow-100 text-yellow-700"
-                        }`}>
-                          {inter.severity}
-                        </span>
-                      </div>
-                    ))}
+                    {drugCheck.interactions?.map((inter, i) => {
+                      const sev = SEVERITY_STYLES[inter.severity] || SEVERITY_STYLES.mild;
+                      return (
+                        <div key={i} className={`${sev.bg} border ${sev.border} rounded-xl p-3`}>
+                          <div className="flex items-center justify-between gap-2">
+                            <p className={`${sev.text} text-sm font-medium`}>{inter.drugs}</p>
+                            <span className={`flex-shrink-0 px-2 py-0.5 rounded-full text-xs font-semibold capitalize ${sev.badgeBg} ${sev.badgeText}`}>
+                              {inter.severity}
+                            </span>
+                          </div>
+                          <p className={`${sev.text} text-xs mt-1 opacity-80`}>{inter.description}</p>
+                        </div>
+                      );
+                    })}
                   </>
                 )}
               </div>

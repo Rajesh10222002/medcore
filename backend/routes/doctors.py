@@ -1,5 +1,5 @@
 from flask import Blueprint, jsonify, request
-from db import get_db
+from db import get_db, release_db
 from middleware.auth import token_required, role_required
 import requests as http_req
 import os
@@ -44,7 +44,6 @@ def get_doctor_profile():
         return jsonify({"error": str(e)}), 500
     finally:
         cur.close()
-        conn.close()
 
 
 # ─────────────────────────────────────────
@@ -107,7 +106,6 @@ def get_doctor_analytics():
         return jsonify({"error": str(e)}), 500
     finally:
         cur.close()
-        conn.close()
 
 
 # ─────────────────────────────────────────
@@ -218,7 +216,6 @@ def get_my_patients():
         return jsonify({"error": str(e)}), 500
     finally:
         cur.close()
-        conn.close()
 
 
 # ─────────────────────────────────────────
@@ -294,6 +291,14 @@ def get_patient_detail(patient_id):
             "note_type":  n[2],
             "created_at": str(n[3])
         } for n in notes]
+
+        # Done with the DB — release the pooled connection before the
+        # public-HAPI-FHIR calls below (up to 10s each). Holding a
+        # pooled connection idle across those starves the shared pool
+        # for every other concurrent request (measured — see
+        # loadtest/README.md).
+        cur.close()
+        release_db()
 
         # FHIR data
         fhir_id = row[7]
@@ -415,7 +420,6 @@ def get_patient_detail(patient_id):
         return jsonify({"error": str(e)}), 500
     finally:
         cur.close()
-        conn.close()
 
 
 # ─────────────────────────────────────────
@@ -483,7 +487,6 @@ def save_note(patient_id):
         return jsonify({"error": str(e)}), 500
     finally:
         cur.close()
-        conn.close()
 
 
 # ─────────────────────────────────────────
@@ -563,7 +566,6 @@ def save_vitals(patient_id):
         return jsonify({"error": str(e)}), 500
     finally:
         cur.close()
-        conn.close()
 
 
 # ─────────────────────────────────────────
@@ -632,7 +634,6 @@ def add_diagnosis(patient_id):
         return jsonify({"error": str(e)}), 500
     finally:
         cur.close()
-        conn.close()
 
 
 # ─────────────────────────────────────────
@@ -696,7 +697,6 @@ def add_medication(patient_id):
         return jsonify({"error": str(e)}), 500
     finally:
         cur.close()
-        conn.close()
 
 
 # ─────────────────────────────────────────
@@ -764,7 +764,6 @@ def add_allergy(patient_id):
         return jsonify({"error": str(e)}), 500
     finally:
         cur.close()
-        conn.close()
 
 
 # ─────────────────────────────────────────
@@ -858,7 +857,6 @@ def set_blood_group(patient_id):
         return jsonify({"error": str(e)}), 500
     finally:
         cur.close()
-        conn.close()
 
 
 # ─────────────────────────────────────────
@@ -934,7 +932,6 @@ def get_blood_group(patient_id):
         return jsonify({"blood_group": None}), 200
     finally:
         cur.close()
-        conn.close()
 
 
 # ─────────────────────────────────────────
@@ -979,7 +976,6 @@ def get_my_feedback():
         return jsonify({"error": str(e)}), 500
     finally:
         cur.close()
-        conn.close()
 
 
 # ─────────────────────────────────────────
@@ -1024,7 +1020,6 @@ def create_referral(patient_id):
         return jsonify({"error": str(e)}), 500
     finally:
         cur.close()
-        conn.close()
 
 
 # ─────────────────────────────────────────
@@ -1063,7 +1058,6 @@ def get_incoming_referrals():
         return jsonify({"error": str(e)}), 500
     finally:
         cur.close()
-        conn.close()
 
 
 # ─────────────────────────────────────────
@@ -1095,7 +1089,6 @@ def accept_referral(referral_id):
         return jsonify({"error": str(e)}), 500
     finally:
         cur.close()
-        conn.close()
 
 
 # ─────────────────────────────────────────
@@ -1129,7 +1122,6 @@ def decline_referral(referral_id):
         return jsonify({"error": str(e)}), 500
     finally:
         cur.close()
-        conn.close()
 
 
 # ─────────────────────────────────────────

@@ -628,7 +628,7 @@ if fhir_enrichment is not None:
 if referral_enrichment is not None:
     patient_summary = patient_summary.join(referral_enrichment, on="patient_id", how="left")
 
-patient_summary = patient_summary.fillna({
+FILLNA_DEFAULTS = {
     "total_appointments": 0,
     "completed_count":    0,
     "cancelled_count":    0,
@@ -639,7 +639,16 @@ patient_summary = patient_summary.fillna({
     "diagnosis_count":         0,
     "active_medication_count": 0,
     "allergy_count":           0,
-    "active_referral_count":   0
+    "active_referral_count":   0,
+}
+# Only fill columns that actually exist on patient_summary — diagnosis_count/
+# active_medication_count/allergy_count only get added above if the matching
+# FHIR-sourced Silver table exists AND has data this run (e.g. none of them do
+# when every seeded patient's fhir_id is a random UUID never registered with
+# the real FHIR server — referencing a column that was never joined in throws
+# UNRESOLVED_COLUMN, not a silent no-op).
+patient_summary = patient_summary.fillna({
+    k: v for k, v in FILLNA_DEFAULTS.items() if k in patient_summary.columns
 })
 
 (

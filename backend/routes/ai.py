@@ -1,6 +1,6 @@
 from flask import Blueprint, request, jsonify
 from middleware.auth import token_required, role_required
-from db import get_db
+from db import get_db, release_db
 from ai_client import generate_text
 import requests as http_req
 import os
@@ -59,7 +59,6 @@ def get_patient_context(patient_id, fhir_id, name):
         past = cur.fetchall()
 
         cur.close()
-        conn.close()
 
         if upcoming:
             context += "\nUpcoming Appointments:\n"
@@ -225,7 +224,6 @@ def suggested_questions():
         else:
             questions.append("How do I book an appointment?")
         cur.close()
-        conn.close()
     except:
         pass
 
@@ -296,6 +294,14 @@ def copilot():
                 FROM patients WHERE patient_id = %s
             """, (patient_id,))
             row = cur.fetchone()
+            cur.close()
+            # Done with the DB — release the pooled connection before
+            # the FHIR $everything call below (up to 10s). Holding a
+            # pooled connection idle across that starves the shared
+            # pool for every other concurrent request (measured — see
+            # loadtest/README.md).
+            release_db()
+
             if row:
                 from datetime import date
                 age = (date.today() - row[2]).days // 365
@@ -326,8 +332,6 @@ def copilot():
                             patient_context += f"Known conditions: {', '.join(conditions)}\n"
                         if meds:
                             patient_context += f"Current medications: {', '.join(meds)}\n"
-            cur.close()
-            conn.close()
         except Exception as e:
             print(f"Copilot context error: {e}")
 
@@ -552,7 +556,6 @@ Be concise and clinical. If certain data is not available, skip that part."""
         return jsonify({"summary": "Unable to generate summary at this time."}), 200
     finally:
         cur.close()
-        conn.close()
 
 
 # ─────────────────────────────────────────
@@ -619,71 +622,75 @@ Rules:
                 )
                 row     = cur.fetchone()
                 fhir_id = row[0] if row and row[0] else None
-
-                if fhir_id:
-                    from datetime import datetime
-
-                    for dx in diagnoses:
-                        try:
-                            condition = {
-                                "resourceType": "Condition",
-                                "subject":      {"reference": f"Patient/{fhir_id}"},
-                                "code": {
-                                    "text": dx["display"],
-                                    "coding": [{
-                                        "system":  "http://hl7.org/fhir/sid/icd-10",
-                                        "code":    dx.get("icd_code") or "Z99",
-                                        "display": dx["display"]
-                                    }]
-                                },
-                                "recordedDate": str(datetime.now().date()),
-                                "clinicalStatus": {
-                                    "coding": [{
-                                        "system": "http://terminology.hl7.org/CodeSystem/condition-clinical",
-                                        "code":   "active"
-                                    }]
-                                }
-                            }
-                            resp = http_req.post(
-                                f"{FHIR_URL}/Condition",
-                                json=condition,
-                                headers={"Content-Type": "application/fhir+json"},
-                                timeout=10
-                            )
-                            if resp.status_code in [200, 201]:
-                                fhir_written["diagnoses"].append(dx["display"])
-                        except Exception as fe:
-                            print(f"FHIR condition write error: {fe}")
-
-                    for med in medications:
-                        try:
-                            med_display = f"{med['name']} {med.get('dosage','')} {med.get('frequency','')}".strip()
-                            medication  = {
-                                "resourceType": "MedicationRequest",
-                                "status":       "active",
-                                "intent":       "order",
-                                "subject":      {"reference": f"Patient/{fhir_id}"},
-                                "medicationCodeableConcept": {
-                                    "text":   med_display,
-                                    "coding": [{"display": med["name"]}]
-                                },
-                                "authoredOn":        str(datetime.now().date()),
-                                "dosageInstruction": [{"text": f"{med.get('dosage','')} {med.get('frequency','')}".strip()}]
-                            }
-                            resp = http_req.post(
-                                f"{FHIR_URL}/MedicationRequest",
-                                json=medication,
-                                headers={"Content-Type": "application/fhir+json"},
-                                timeout=10
-                            )
-                            if resp.status_code in [200, 201]:
-                                fhir_written["medications"].append(med["name"])
-                        except Exception as fe:
-                            print(f"FHIR medication write error: {fe}")
-
             finally:
                 cur.close()
-                conn.close()
+            # Done with the DB — release the pooled connection before
+            # the FHIR write loops below (each up to 10s, one call per
+            # diagnosis/medication). Holding a pooled connection idle
+            # across those starves the shared pool for every other
+            # concurrent request (measured — see loadtest/README.md).
+            release_db()
+
+            if fhir_id:
+                from datetime import datetime
+
+                for dx in diagnoses:
+                    try:
+                        condition = {
+                            "resourceType": "Condition",
+                            "subject":      {"reference": f"Patient/{fhir_id}"},
+                            "code": {
+                                "text": dx["display"],
+                                "coding": [{
+                                    "system":  "http://hl7.org/fhir/sid/icd-10",
+                                    "code":    dx.get("icd_code") or "Z99",
+                                    "display": dx["display"]
+                                }]
+                            },
+                            "recordedDate": str(datetime.now().date()),
+                            "clinicalStatus": {
+                                "coding": [{
+                                    "system": "http://terminology.hl7.org/CodeSystem/condition-clinical",
+                                    "code":   "active"
+                                }]
+                            }
+                        }
+                        resp = http_req.post(
+                            f"{FHIR_URL}/Condition",
+                            json=condition,
+                            headers={"Content-Type": "application/fhir+json"},
+                            timeout=10
+                        )
+                        if resp.status_code in [200, 201]:
+                            fhir_written["diagnoses"].append(dx["display"])
+                    except Exception as fe:
+                        print(f"FHIR condition write error: {fe}")
+
+                for med in medications:
+                    try:
+                        med_display = f"{med['name']} {med.get('dosage','')} {med.get('frequency','')}".strip()
+                        medication  = {
+                            "resourceType": "MedicationRequest",
+                            "status":       "active",
+                            "intent":       "order",
+                            "subject":      {"reference": f"Patient/{fhir_id}"},
+                            "medicationCodeableConcept": {
+                                "text":   med_display,
+                                "coding": [{"display": med["name"]}]
+                            },
+                            "authoredOn":        str(datetime.now().date()),
+                            "dosageInstruction": [{"text": f"{med.get('dosage','')} {med.get('frequency','')}".strip()}]
+                        }
+                        resp = http_req.post(
+                            f"{FHIR_URL}/MedicationRequest",
+                            json=medication,
+                            headers={"Content-Type": "application/fhir+json"},
+                            timeout=10
+                        )
+                        if resp.status_code in [200, 201]:
+                            fhir_written["medications"].append(med["name"])
+                    except Exception as fe:
+                        print(f"FHIR medication write error: {fe}")
 
         return jsonify({
             "diagnoses":    diagnoses,
@@ -727,7 +734,6 @@ def suggest_specialty():
         specialties = [r[0] for r in cur.fetchall()]
     finally:
         cur.close()
-        conn.close()
 
     if not specialties:
         return jsonify({"specialty": None, "reason": "No specialties available right now."}), 200

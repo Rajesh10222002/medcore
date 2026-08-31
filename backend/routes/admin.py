@@ -155,7 +155,6 @@ def get_kpis():
         return jsonify({"error": str(e)}), 500
     finally:
         cur.close()
-        conn.close()
 
 
 # ─────────────────────────────────────────
@@ -262,7 +261,6 @@ def get_all_patients():
         return jsonify({"error": str(e)}), 500
     finally:
         cur.close()
-        conn.close()
 
 
 # ─────────────────────────────────────────
@@ -440,7 +438,6 @@ def get_admin_patient_detail(patient_id):
         return jsonify({"error": str(e)}), 500
     finally:
         cur.close()
-        conn.close()
 
 
 # ─────────────────────────────────────────
@@ -488,7 +485,6 @@ def get_all_doctors():
         return jsonify({"error": str(e)}), 500
     finally:
         cur.close()
-        conn.close()
 
 
 # ─────────────────────────────────────────
@@ -582,7 +578,6 @@ def get_admin_doctor_detail(doctor_id):
         return jsonify({"error": str(e)}), 500
     finally:
         cur.close()
-        conn.close()
 
 
 # ─────────────────────────────────────────
@@ -689,7 +684,6 @@ def create_doctor():
         return jsonify({"error": str(e)}), 500
     finally:
         cur.close()
-        conn.close()
 
 
 # ─────────────────────────────────────────
@@ -794,7 +788,6 @@ def get_all_appointments():
         return jsonify({"error": str(e)}), 500
     finally:
         cur.close()
-        conn.close()
 
 # ─────────────────────────────────────────
 # POST /api/admin/nl-query
@@ -955,7 +948,6 @@ Answer:"""
         return jsonify({"error": "Unable to process query at this time."}), 500
     finally:
         cur.close()
-        conn.close()
 
 
 # ─────────────────────────────────────────
@@ -983,7 +975,6 @@ def get_specialties():
         return jsonify({"error": str(e)}), 500
     finally:
         cur.close()
-        conn.close()
 
 
 # ─────────────────────────────────────────
@@ -1022,7 +1013,6 @@ def create_specialty():
         return jsonify({"error": str(e)}), 500
     finally:
         cur.close()
-        conn.close()
 
 
 # ─────────────────────────────────────────
@@ -1066,4 +1056,3 @@ def get_admin_doctor_feedback(doctor_id):
         return jsonify({"error": str(e)}), 500
     finally:
         cur.close()
-        conn.close()

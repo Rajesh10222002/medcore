@@ -1,5 +1,5 @@
 from flask import Blueprint, jsonify, request
-from db import get_db
+from db import get_db, release_db
 from middleware.auth import token_required, role_required
 import requests as http_req
 import os
@@ -46,7 +46,6 @@ def get_my_profile():
         return jsonify({"error": str(e)}), 500
     finally:
         cur.close()
-        conn.close()
 
 
 # ─────────────────────────────────────────
@@ -81,7 +80,13 @@ def get_my_fhir():
         neon_blood_group = None
     finally:
         cur2.close()
-        conn2.close()
+
+    # Done with the DB — release the pooled connection before the
+    # several public-HAPI-FHIR calls below, which can each take up to
+    # 8-10s. Holding a pooled connection idle across those starves the
+    # shared pool for every other concurrent request (measured, not
+    # theoretical — see loadtest/README.md).
+    release_db()
 
     if not fhir_id:
         return jsonify({
@@ -278,7 +283,7 @@ def get_my_referrals():
         return jsonify({"error": str(e)}), 500
     finally:
         cur.close()
-        conn.close()
+
 
 # ─────────────────────────────────────────
 # GET /api/patients/me/risk

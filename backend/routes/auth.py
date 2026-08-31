@@ -118,7 +118,6 @@ def signup():
         return jsonify({"error": str(e)}), 500
     finally:
         cur.close()
-        conn.close()
 
 
 # ─────────────────────────────────────────────
@@ -208,7 +207,6 @@ def login():
         return jsonify({"error": str(e)}), 500
     finally:
         cur.close()
-        conn.close()
 
 
 # ─────────────────────────────────────────────
@@ -252,4 +250,3 @@ def change_password():
         return jsonify({"error": str(e)}), 500
     finally:
         cur.close()
-        conn.close()

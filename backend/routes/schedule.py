@@ -39,7 +39,6 @@ def get_leaves():
         return jsonify({"error": str(e)}), 500
     finally:
         cur.close()
-        conn.close()
 
 
 # ─────────────────────────────────────────
@@ -120,7 +119,6 @@ def get_calendar():
         return jsonify({"error": str(e)}), 500
     finally:
         cur.close()
-        conn.close()
 
 
 # ─────────────────────────────────────────
@@ -189,7 +187,6 @@ def get_day_detail(date_str):
         return jsonify({"error": str(e)}), 500
     finally:
         cur.close()
-        conn.close()
 
 
 # ─────────────────────────────────────────
@@ -270,7 +267,6 @@ def add_leave():
         return jsonify({"error": str(e)}), 500
     finally:
         cur.close()
-        conn.close()
 
 
 # ─────────────────────────────────────────
@@ -300,4 +296,3 @@ def delete_leave(leave_id):
         return jsonify({"error": str(e)}), 500
     finally:
         cur.close()
-        conn.close()

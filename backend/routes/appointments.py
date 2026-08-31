@@ -23,33 +23,37 @@ def get_my_appointments():
     conn = get_db()
     cur  = conn.cursor()
 
-    # Auto-complete past scheduled appointments
-    cur.execute("""
-        UPDATE appointments
-        SET status = 'completed'
-        WHERE status = 'scheduled'
-        AND appointment_date < NOW()
-        AND patient_id = %s
-        RETURNING appointment_id, doctor_id
-    """, (patient_id,))
-    just_completed = cur.fetchall()
-    conn.commit()
-
-    # Close the loop on any pending/accepted referral for this patient+doctor pair
-    if just_completed:
-        try:
-            for _, doctor_id in just_completed:
-                cur.execute("""
-                    UPDATE referrals SET status = 'completed'
-                    WHERE patient_id = %s AND referred_to_doctor_id = %s
-                    AND status IN ('pending', 'accepted')
-                """, (patient_id, doctor_id))
-            conn.commit()
-        except Exception as ref_err:
-            print(f"Referral completion error: {ref_err}")
-            conn.rollback()
-
+    # Everything below used to run partly outside any try/finally — if the
+    # auto-complete UPDATE threw, the connection was never released. Under
+    # the connection pool that's a permanent capacity loss (not just one
+    # dangling socket), so this now all lives inside the one try/finally.
     try:
+        # Auto-complete past scheduled appointments
+        cur.execute("""
+            UPDATE appointments
+            SET status = 'completed'
+            WHERE status = 'scheduled'
+            AND appointment_date < NOW()
+            AND patient_id = %s
+            RETURNING appointment_id, doctor_id
+        """, (patient_id,))
+        just_completed = cur.fetchall()
+        conn.commit()
+
+        # Close the loop on any pending/accepted referral for this patient+doctor pair
+        if just_completed:
+            try:
+                for _, doctor_id in just_completed:
+                    cur.execute("""
+                        UPDATE referrals SET status = 'completed'
+                        WHERE patient_id = %s AND referred_to_doctor_id = %s
+                        AND status IN ('pending', 'accepted')
+                    """, (patient_id, doctor_id))
+                conn.commit()
+            except Exception as ref_err:
+                print(f"Referral completion error: {ref_err}")
+                conn.rollback()
+
         cur.execute("""
             SELECT
                 a.appointment_id,
@@ -85,7 +89,6 @@ def get_my_appointments():
         return jsonify({"error": str(e)}), 500
     finally:
         cur.close()
-        conn.close()
 
 
 # ─────────────────────────────────────────
@@ -120,7 +123,6 @@ def get_doctors():
         return jsonify({"error": str(e)}), 500
     finally:
         cur.close()
-        conn.close()
 
 
 # ─────────────────────────────────────────
@@ -222,7 +224,6 @@ def book_appointment():
         return jsonify({"error": str(e)}), 500
     finally:
         cur.close()
-        conn.close()
 
 
 # ─────────────────────────────────────────
@@ -264,7 +265,6 @@ def cancel_appointment(appointment_id):
         return jsonify({"error": str(e)}), 500
     finally:
         cur.close()
-        conn.close()
 
 
 # ─────────────────────────────────────────
@@ -393,7 +393,6 @@ def get_slots():
         return jsonify({"error": str(e)}), 500
     finally:
         cur.close()
-        conn.close()
 
 
 # ─────────────────────────────────────────
@@ -418,7 +417,6 @@ def get_appointment_types():
         return jsonify({"error": str(e)}), 500
     finally:
         cur.close()
-        conn.close()
 
 
 # ─────────────────────────────────────────
@@ -474,4 +472,3 @@ def submit_feedback(appointment_id):
         return jsonify({"error": str(e)}), 500
     finally:
         cur.close()
-        conn.close()
