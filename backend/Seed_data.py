@@ -109,6 +109,8 @@ def random_dob(min_age=18, max_age=75):
 def hash_password(pwd):
     return bcrypt.hashpw(pwd.encode(), bcrypt.gensalt()).decode()
 
+HISTORY_START = date(2023, 1, 1)  # multi-year history for YoY reporting
+
 def random_appointment_date(status):
     today = date.today()
     if status == "scheduled":
@@ -116,8 +118,10 @@ def random_appointment_date(status):
         days_ahead = random.randint(1, 60)
         d = today + timedelta(days=days_ahead)
     else:
-        # Past — last 6 months
-        days_ago = random.randint(1, 180)
+        # Past — spread across the full history window, not just recent months,
+        # so year-over-year comparisons have real prior-year data to compare against
+        span_days = (today - HISTORY_START).days
+        days_ago  = random.randint(1, span_days)
         d = today - timedelta(days=days_ago)
     # Only weekdays
     while d.weekday() >= 5:
@@ -125,6 +129,17 @@ def random_appointment_date(status):
     # Random slot between 9am and 5pm
     hour   = random.choice([9,9,10,10,11,11,14,14,15,15,16])
     minute = random.choice([0, 30])
+    return datetime(d.year, d.month, d.day, hour, minute)
+
+def random_historical_datetime():
+    """Not tied to a specific appointment — used for referrals, which aren't
+    appointment-linked. Spread evenly across the same history window."""
+    today = date.today()
+    span_days = (today - HISTORY_START).days
+    days_ago  = random.randint(0, span_days)
+    d = today - timedelta(days=days_ago)
+    hour   = random.randint(8, 17)
+    minute = random.choice([0, 15, 30, 45])
     return datetime(d.year, d.month, d.day, hour, minute)
 
 print("=" * 60)
@@ -246,6 +261,7 @@ try:
     cur.execute("DELETE FROM doctor_leaves")
     cur.execute("DELETE FROM appointments")
     cur.execute("DELETE FROM clinical_notes")
+    cur.execute("DELETE FROM ai_predictions")
     cur.execute("DELETE FROM doctor_schedules")
     cur.execute("DELETE FROM doctors WHERE user_id IN (SELECT user_id FROM users WHERE role='doctor')")
     cur.execute("DELETE FROM patients WHERE user_id IN (SELECT user_id FROM users WHERE role='patient')")
@@ -389,25 +405,25 @@ try:
     conn.commit()
     print(f"  Created {len(patient_ids)} patients")
 
-    # ── STEP 6: Create appointments (600) ────────────────────────
-    print("\n[6/8] Creating 600 appointments...")
+    # ── STEP 6: Create appointments — near-term scheduled + multi-year history ──
+    # Scheduled (future) appointments stay a realistic near-term booking volume.
+    # Completed/cancelled appointments are scaled up and spread from HISTORY_START
+    # to today, so each year has comparable density for YoY reporting.
+    FUTURE_COUNT = 150
+    PAST_COUNT   = 2850
+    PAST_STATUSES = ["completed", "cancelled"]
+    PAST_WEIGHTS  = [0.55 / 0.75, 0.20 / 0.75]  # same relative mix as before, renormalized
+
+    print(f"\n[6/8] Creating {FUTURE_COUNT} scheduled + {PAST_COUNT} historical appointments "
+          f"({HISTORY_START.isoformat()} to today)...")
     appt_count = 0
     used_slots  = set()
 
-    for _ in range(600):
-        patient_id = random.choice(patient_ids)
-        doctor_id  = random.choice(doctor_ids)
-        status     = random.choices(STATUSES, STATUS_WEIGHTS)[0]
-        reason     = random.choice(REASONS)
-        appt_date  = random_appointment_date(status)
-        no_show_risk = round(random.uniform(5.0, 85.0), 1)
-
-        # Avoid duplicate same doctor+slot
+    def insert_appointment(patient_id, doctor_id, appt_date, status, reason, no_show_risk):
         slot_key = (doctor_id, appt_date.strftime("%Y-%m-%d %H:%M"))
         if slot_key in used_slots:
-            continue
+            return False
         used_slots.add(slot_key)
-
         cur.execute("""
             INSERT INTO appointments
             (patient_id, doctor_id, appointment_date,
@@ -415,7 +431,26 @@ try:
             VALUES (%s,%s,%s,%s,%s,%s)
         """, (patient_id, doctor_id, appt_date,
               status, reason, no_show_risk))
-        appt_count += 1
+        return True
+
+    for _ in range(FUTURE_COUNT):
+        patient_id = random.choice(patient_ids)
+        doctor_id  = random.choice(doctor_ids)
+        reason     = random.choice(REASONS)
+        appt_date  = random_appointment_date("scheduled")
+        no_show_risk = round(random.uniform(5.0, 85.0), 1)
+        if insert_appointment(patient_id, doctor_id, appt_date, "scheduled", reason, no_show_risk):
+            appt_count += 1
+
+    for _ in range(PAST_COUNT):
+        patient_id = random.choice(patient_ids)
+        doctor_id  = random.choice(doctor_ids)
+        status     = random.choices(PAST_STATUSES, PAST_WEIGHTS)[0]
+        reason     = random.choice(REASONS)
+        appt_date  = random_appointment_date(status)
+        no_show_risk = round(random.uniform(5.0, 85.0), 1)
+        if insert_appointment(patient_id, doctor_id, appt_date, status, reason, no_show_risk):
+            appt_count += 1
 
     conn.commit()
     print(f"  Created {appt_count} appointments")
@@ -461,32 +496,39 @@ try:
     # ── STEP 8: Seed sample patient feedback + referrals (demo data) ──
     print("\n[8/8] Seeding sample patient feedback + referrals...")
 
-    cur.execute("SELECT appointment_id, patient_id, doctor_id FROM appointments WHERE status = 'completed'")
+    cur.execute("SELECT appointment_id, patient_id, doctor_id, appointment_date FROM appointments WHERE status = 'completed'")
     completed_appts = cur.fetchall()
 
+    # Feedback timestamps are tied to the actual appointment date (patients rate
+    # shortly after their visit) rather than DEFAULT NOW(), so ratings spread
+    # across the same multi-year history as the appointments themselves.
     feedback_count = 0
-    sample_size = min(150, len(completed_appts))
-    for appt_id, patient_id, doctor_id in random.sample(completed_appts, sample_size):
-        rating  = random.choices(FEEDBACK_RATINGS, FEEDBACK_RATING_WEIGHTS)[0]
-        comment = random.choice(FEEDBACK_COMMENTS)
+    sample_size = min(1200, len(completed_appts))
+    for appt_id, patient_id, doctor_id, appt_date in random.sample(completed_appts, sample_size):
+        rating   = random.choices(FEEDBACK_RATINGS, FEEDBACK_RATING_WEIGHTS)[0]
+        comment  = random.choice(FEEDBACK_COMMENTS)
+        feedback_created_at = appt_date + timedelta(days=random.randint(0, 3))
         cur.execute("""
-            INSERT INTO patient_feedback (appointment_id, patient_id, doctor_id, rating, comment)
-            VALUES (%s,%s,%s,%s,%s)
-        """, (appt_id, patient_id, doctor_id, rating, comment))
+            INSERT INTO patient_feedback (appointment_id, patient_id, doctor_id, rating, comment, created_at)
+            VALUES (%s,%s,%s,%s,%s,%s)
+        """, (appt_id, patient_id, doctor_id, rating, comment, feedback_created_at))
         feedback_count += 1
     conn.commit()
     print(f"  Created {feedback_count} patient feedback ratings")
 
+    # Referrals aren't appointment-linked, so their history is spread evenly
+    # across the same HISTORY_START-to-today window independently.
     referral_count = 0
-    for _ in range(25):
+    for _ in range(125):
         patient_id                     = random.choice(patient_ids)
         referring_id, referred_to_id   = random.sample(doctor_ids, 2)
         reason                         = random.choice(REFERRAL_REASONS)
         status                         = random.choice(REFERRAL_STATUSES)
+        referral_created_at            = random_historical_datetime()
         cur.execute("""
-            INSERT INTO referrals (patient_id, referring_doctor_id, referred_to_doctor_id, reason, status)
-            VALUES (%s,%s,%s,%s,%s)
-        """, (patient_id, referring_id, referred_to_id, reason, status))
+            INSERT INTO referrals (patient_id, referring_doctor_id, referred_to_doctor_id, reason, status, created_at)
+            VALUES (%s,%s,%s,%s,%s,%s)
+        """, (patient_id, referring_id, referred_to_id, reason, status, referral_created_at))
         referral_count += 1
     conn.commit()
     print(f"  Created {referral_count} referrals")

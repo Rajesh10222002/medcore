@@ -1,5 +1,5 @@
 from flask import Blueprint, jsonify, request
-from db import get_db
+from db import get_db, release_db
 from middleware.auth import token_required, role_required
 import requests as http_req
 import os
@@ -44,7 +44,6 @@ def get_doctor_profile():
         return jsonify({"error": str(e)}), 500
     finally:
         cur.close()
-        conn.close()
 
 
 # ─────────────────────────────────────────
@@ -107,7 +106,6 @@ def get_doctor_analytics():
         return jsonify({"error": str(e)}), 500
     finally:
         cur.close()
-        conn.close()
 
 
 # ─────────────────────────────────────────
@@ -218,7 +216,6 @@ def get_my_patients():
         return jsonify({"error": str(e)}), 500
     finally:
         cur.close()
-        conn.close()
 
 
 # ─────────────────────────────────────────
@@ -294,6 +291,14 @@ def get_patient_detail(patient_id):
             "note_type":  n[2],
             "created_at": str(n[3])
         } for n in notes]
+
+        # Done with the DB — release the pooled connection before the
+        # public-HAPI-FHIR calls below (up to 10s each). Holding a
+        # pooled connection idle across those starves the shared pool
+        # for every other concurrent request (measured — see
+        # loadtest/README.md).
+        cur.close()
+        release_db()
 
         # FHIR data
         fhir_id = row[7]
@@ -415,7 +420,6 @@ def get_patient_detail(patient_id):
         return jsonify({"error": str(e)}), 500
     finally:
         cur.close()
-        conn.close()
 
 
 # ─────────────────────────────────────────
@@ -483,7 +487,6 @@ def save_note(patient_id):
         return jsonify({"error": str(e)}), 500
     finally:
         cur.close()
-        conn.close()
 
 
 # ─────────────────────────────────────────
@@ -563,7 +566,6 @@ def save_vitals(patient_id):
         return jsonify({"error": str(e)}), 500
     finally:
         cur.close()
-        conn.close()
 
 
 # ─────────────────────────────────────────
@@ -632,7 +634,6 @@ def add_diagnosis(patient_id):
         return jsonify({"error": str(e)}), 500
     finally:
         cur.close()
-        conn.close()
 
 
 # ─────────────────────────────────────────
@@ -696,7 +697,6 @@ def add_medication(patient_id):
         return jsonify({"error": str(e)}), 500
     finally:
         cur.close()
-        conn.close()
 
 
 # ─────────────────────────────────────────
@@ -764,7 +764,6 @@ def add_allergy(patient_id):
         return jsonify({"error": str(e)}), 500
     finally:
         cur.close()
-        conn.close()
 
 
 # ─────────────────────────────────────────
@@ -858,7 +857,6 @@ def set_blood_group(patient_id):
         return jsonify({"error": str(e)}), 500
     finally:
         cur.close()
-        conn.close()
 
 
 # ─────────────────────────────────────────
@@ -934,7 +932,6 @@ def get_blood_group(patient_id):
         return jsonify({"blood_group": None}), 200
     finally:
         cur.close()
-        conn.close()
 
 
 # ─────────────────────────────────────────
@@ -979,7 +976,6 @@ def get_my_feedback():
         return jsonify({"error": str(e)}), 500
     finally:
         cur.close()
-        conn.close()
 
 
 # ─────────────────────────────────────────
@@ -1024,7 +1020,6 @@ def create_referral(patient_id):
         return jsonify({"error": str(e)}), 500
     finally:
         cur.close()
-        conn.close()
 
 
 # ─────────────────────────────────────────
@@ -1063,7 +1058,6 @@ def get_incoming_referrals():
         return jsonify({"error": str(e)}), 500
     finally:
         cur.close()
-        conn.close()
 
 
 # ─────────────────────────────────────────
@@ -1095,7 +1089,6 @@ def accept_referral(referral_id):
         return jsonify({"error": str(e)}), 500
     finally:
         cur.close()
-        conn.close()
 
 
 # ─────────────────────────────────────────
@@ -1129,4 +1122,46 @@ def decline_referral(referral_id):
         return jsonify({"error": str(e)}), 500
     finally:
         cur.close()
-        conn.close()
+
+
+# ─────────────────────────────────────────
+# GET /api/doctor/patients/:id/risk
+# ML risk predictions (Databricks-trained, ai_predictions table)
+# ─────────────────────────────────────────
+@doctors_bp.route("/doctor/patients/<int:patient_id>/risk", methods=["GET"])
+@token_required
+@role_required(["doctor"])
+def get_patient_risk(patient_id):
+    conn = get_db()
+    cur  = conn.cursor()
+    try:
+        cur.execute("""
+            SELECT prediction_type, prediction_result, confidence_score, created_at
+            FROM ai_predictions WHERE patient_id = %s
+        """, (patient_id,))
+        rows = cur.fetchall()
+        if not rows:
+            return jsonify({"has_predictions": False}), 200
+
+        by_type = {r[0]: r for r in rows}
+
+        def binary_risk(row):
+            if not row:
+                return None
+            return {
+                "level":       "High" if row[1] == "1" else "Low",
+                "probability": float(row[2]) if row[2] is not None else None
+            }
+
+        cluster_row = by_type.get("patient_clustering_kmeans")
+        return jsonify({
+            "has_predictions":  True,
+            "readmission_risk": binary_risk(by_type.get("readmission_random_forest")),
+            "no_show_risk":     binary_risk(by_type.get("no_show_random_forest")),
+            "risk_tier":        cluster_row[1] if cluster_row else None,
+            "generated_at":     str(rows[0][3])
+        }), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    finally:
+        cur.close()

@@ -2,6 +2,7 @@ import os
 from flask import Flask, jsonify, send_from_directory
 from flask_cors import CORS
 from dotenv import load_dotenv
+from db import init_app as init_db
 from routes.auth         import auth_bp
 from routes.patients     import patients_bp
 from routes.appointments import appointments_bp
@@ -13,6 +14,7 @@ from routes.schedule     import schedule_bp
 load_dotenv()
 
 app = Flask(__name__)
+init_db(app)
 
 FRONTEND_ORIGIN = os.getenv("FRONTEND_ORIGIN", "http://localhost:5173")
 CORS(app, origins=[FRONTEND_ORIGIN])
@@ -67,4 +69,7 @@ def serve_frontend(path):
 
 if __name__ == "__main__":
     debug_mode = os.getenv("FLASK_DEBUG", "false").lower() == "true"
-    app.run(debug=debug_mode, port=int(os.getenv("PORT", 5000)))
+    # threaded=True — several routes (AI summary, drug interaction, copilot,
+    # risk predictions) block on Ollama for 10-45s+; without this, one slow
+    # AI call stalls every other request on the single dev-server thread.
+    app.run(debug=debug_mode, port=int(os.getenv("PORT", 5000)), threaded=True)

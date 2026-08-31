@@ -473,35 +473,60 @@ export default function Appointments() {
       )}
 
       {/* ── Referral banners ── */}
-      {referrals.filter(r => r.status === "pending" || r.status === "accepted").map(r => (
+      {/* Hide the "go book it" prompt once a live (non-cancelled) appointment
+          with the referred-to doctor already exists — otherwise it keeps
+          nagging to book something already booked, right up until that
+          appointment's date passes and the referral auto-completes. */}
+      {referrals.filter(r =>
+        (r.status === "pending" || r.status === "accepted") &&
+        !appointments.some(a => a.doctor_id === r.referred_to_doctor_id && a.status !== "cancelled")
+      ).map(r => {
+        const isAccepted = r.status === "accepted";
+        return (
         <motion.div
           key={r.referral_id}
           initial={{ opacity: 0, y: 8 }}
           animate={{ opacity: 1, y: 0 }}
           className="flex items-center gap-3 p-4 rounded-2xl mb-4"
-          style={{ background: "rgba(245,158,11,0.06)", border: "1px solid rgba(245,158,11,0.2)" }}
+          style={isAccepted
+            ? { background: "rgba(16,185,129,0.06)", border: "1px solid rgba(16,185,129,0.2)" }
+            : { background: "rgba(245,158,11,0.06)", border: "1px solid rgba(245,158,11,0.2)" }
+          }
         >
           <div className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0"
-            style={{ background: "rgba(245,158,11,0.15)" }}>
-            <ArrowRight size={16} className="text-amber-600" />
+            style={{ background: isAccepted ? "rgba(16,185,129,0.15)" : "rgba(245,158,11,0.15)" }}>
+            {isAccepted
+              ? <CheckCircle size={16} className="text-emerald-600" />
+              : <ArrowRight size={16} className="text-amber-600" />
+            }
           </div>
           <div className="flex-1 min-w-0">
             <p className="text-sm text-slate-700">
-              <span className="font-bold">Dr. {r.referring_doctor_name}</span> has referred you to{" "}
-              <span className="font-bold">Dr. {r.referred_to_doctor_name}</span>
-              {r.referred_to_specialization && ` (${r.referred_to_specialization})`}
+              {isAccepted ? (
+                <><span className="font-bold">Dr. {r.referred_to_doctor_name}</span> accepted the referral from{" "}
+                <span className="font-bold">Dr. {r.referring_doctor_name}</span> — go ahead and book</>
+              ) : (
+                <><span className="font-bold">Dr. {r.referring_doctor_name}</span> has referred you to{" "}
+                <span className="font-bold">Dr. {r.referred_to_doctor_name}</span>
+                {r.referred_to_specialization && ` (${r.referred_to_specialization})`}{" "}
+                <span className="text-amber-600 font-semibold">· awaiting confirmation</span></>
+              )}
             </p>
             {r.reason && <p className="text-slate-400 text-xs mt-0.5 italic truncate">"{r.reason}"</p>}
           </div>
           <button
             onClick={() => handleBookReferral(r)}
             className="flex-shrink-0 px-3.5 py-2 text-xs font-bold rounded-xl text-white transition-all"
-            style={{ background: "linear-gradient(135deg, #2176AE, #1A4A7A)" }}
+            style={{ background: isAccepted
+              ? "linear-gradient(135deg, #059669, #047857)"
+              : "linear-gradient(135deg, #2176AE, #1A4A7A)"
+            }}
           >
             Book Appointment
           </button>
         </motion.div>
-      ))}
+        );
+      })}
 
       {referrals
         .filter(r => r.status === "declined" && !dismissedDeclines.includes(r.referral_id))

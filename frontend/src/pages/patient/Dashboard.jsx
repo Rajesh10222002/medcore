@@ -8,6 +8,7 @@ import EmptyState from "../../components/shared/EmptyState";
 import AnimatedNumber from "../../components/shared/AnimatedNumber";
 import { showError } from "../../components/shared/Toast";
 import { getMyProfile, getMyAppointments, getHealthSummaryAI, getMyFHIR } from "../../api/api";
+import RiskPredictionCard from "../../components/RiskPredictionCard";
 import {
   Activity, Calendar, FileText,
   Heart, Clock, ChevronRight,
@@ -515,6 +516,12 @@ export default function Dashboard() {
                 </div>
               )}
             </div>
+
+            <RiskPredictionCard
+              patientId={profile?.patient_id}
+              role="patient"
+              apiBaseUrl={import.meta.env.VITE_API_URL}
+            />
 
             {/* Past visits card */}
             {past.length > 0 && (

@@ -1,5 +1,5 @@
 from flask import Blueprint, jsonify, request
-from db import get_db
+from db import get_db, release_db
 from middleware.auth import token_required, role_required
 import requests as http_req
 import os
@@ -46,7 +46,6 @@ def get_my_profile():
         return jsonify({"error": str(e)}), 500
     finally:
         cur.close()
-        conn.close()
 
 
 # ─────────────────────────────────────────
@@ -81,7 +80,13 @@ def get_my_fhir():
         neon_blood_group = None
     finally:
         cur2.close()
-        conn2.close()
+
+    # Done with the DB — release the pooled connection before the
+    # several public-HAPI-FHIR calls below, which can each take up to
+    # 8-10s. Holding a pooled connection idle across those starves the
+    # shared pool for every other concurrent request (measured, not
+    # theoretical — see loadtest/README.md).
+    release_db()
 
     if not fhir_id:
         return jsonify({
@@ -278,4 +283,47 @@ def get_my_referrals():
         return jsonify({"error": str(e)}), 500
     finally:
         cur.close()
-        conn.close()
+
+
+# ─────────────────────────────────────────
+# GET /api/patients/me/risk
+# ML risk predictions (Databricks-trained, ai_predictions table)
+# ─────────────────────────────────────────
+@patients_bp.route("/patients/me/risk", methods=["GET"])
+@token_required
+@role_required(["patient"])
+def get_my_risk():
+    patient_id = request.user.get("patient_id")
+    conn = get_db()
+    cur  = conn.cursor()
+    try:
+        cur.execute("""
+            SELECT prediction_type, prediction_result, confidence_score, created_at
+            FROM ai_predictions WHERE patient_id = %s
+        """, (patient_id,))
+        rows = cur.fetchall()
+        if not rows:
+            return jsonify({"has_predictions": False}), 200
+
+        by_type = {r[0]: r for r in rows}
+
+        def binary_risk(row):
+            if not row:
+                return None
+            return {
+                "level":       "High" if row[1] == "1" else "Low",
+                "probability": float(row[2]) if row[2] is not None else None
+            }
+
+        cluster_row = by_type.get("patient_clustering_kmeans")
+        return jsonify({
+            "has_predictions":  True,
+            "readmission_risk": binary_risk(by_type.get("readmission_random_forest")),
+            "no_show_risk":     binary_risk(by_type.get("no_show_random_forest")),
+            "risk_tier":        cluster_row[1] if cluster_row else None,
+            "generated_at":     str(rows[0][3])
+        }), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    finally:
+        cur.close()
