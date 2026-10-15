@@ -1,0 +1,2 @@
+Method,Name,Error,Occurrences,First Seen,Last Seen
+GET,/patients/me/fhir,HTTPError('500 Server Error: INTERNAL SERVER ERROR for url: /patients/me/fhir'),4,2026-08-17T05:20:34Z,2026-08-17T05:20:58Z
