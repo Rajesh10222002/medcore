@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Test Summary Screenshot</title>
+    <style>
+      :root {
+        --bg: #f6f9ff;
+        --panel: #ffffff;
+        --primary: #0b5fff;
+        --text: #111827;
+        --muted: #475569;
+        --success: #0f9d58;
+        --accent: #dbeafe;
+        --shadow: rgba(15, 23, 42, 0.12);
+      }
+
+      * { box-sizing: border-box; }
+
+      html, body {
+        margin: 0;
+        height: 100%;
+        width: 100%;
+        font-family: Arial, Helvetica, sans-serif;
+        background: linear-gradient(135deg, #eef4ff 0%, #f8fbff 100%);
+        color: var(--text);
+      }
+
+      body {
+        display: grid;
+        place-items: center;
+      }
+
+      .card {
+        width: min(1500px, 94vw);
+        min-height: 820px;
+        background: var(--panel);
+        border: 1px solid rgba(11, 95, 255, 0.12);
+        box-shadow: 0 22px 50px var(--shadow);
+        border-radius: 28px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 56px;
+      }
+
+      .content {
+        text-align: center;
+      }
+
+      .badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 12px;
+        background: var(--accent);
+        color: var(--primary);
+        border-radius: 999px;
+        padding: 12px 20px;
+        font-size: 24px;
+        font-weight: 700;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+      }
+
+      .badge .dot {
+        width: 14px;
+        height: 14px;
+        border-radius: 50%;
+        background: var(--success);
+        box-shadow: 0 0 0 6px rgba(15, 157, 88, 0.14);
+      }
+
+      h1 {
+        margin: 38px 0 18px;
+        font-size: clamp(42px, 4vw, 84px);
+        line-height: 1.15;
+        font-weight: 800;
+        letter-spacing: -0.04em;
+      }
+
+      .highlight {
+        color: var(--primary);
+      }
+
+      .sub {
+        font-size: clamp(24px, 2vw, 38px);
+        color: var(--muted);
+        font-weight: 600;
+      }
+
+      .metrics {
+        margin-top: 34px;
+        display: flex;
+        justify-content: center;
+        flex-wrap: wrap;
+        gap: 18px;
+      }
+
+      .chip {
+        background: #f8fafc;
+        border: 1px solid #e2e8f0;
+        border-radius: 14px;
+        padding: 18px 24px;
+        font-size: 26px;
+        font-weight: 700;
+        color: var(--text);
+      }
+
+      .chip strong {
+        color: var(--primary);
+      }
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <div class="content">
+        <div class="badge"><span class="dot"></span> Verified QA</div>
+        <h1>
+          Playwright E2E <span class="highlight">(3 passing)</span> +<br />
+          Locust load test <span class="highlight">(50 VU, 4 runs, 2 bugs fixed)</span>
+        </h1>
+        <div class="sub">End-to-end validation summary</div>
+        <div class="metrics">
+          <div class="chip"><strong>3</strong> E2E passing</div>
+          <div class="chip"><strong>50</strong> virtual users</div>
+          <div class="chip"><strong>4</strong> load runs</div>
+          <div class="chip"><strong>2</strong> bugs fixed</div>
+        </div>
+      </div>
+    </div>
+  </body>
+</html>
